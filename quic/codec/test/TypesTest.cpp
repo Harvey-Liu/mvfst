@@ -27,7 +27,7 @@ std::pair<uint8_t, Buf> encodeShortHeader(const ShortHeader& header) {
   builder.encodePacketHeader();
   auto packet = std::move(builder).buildPacket();
   Buf out;
-  folly::io::Cursor cursor(&packet.header);
+  folly::io::Cursor cursor(packet.header.get());
   auto initialByte = cursor.readBE<uint8_t>();
   cursor.clone(out, cursor.totalLength());
   return std::make_pair(initialByte, std::move(out));

@@ -30,6 +30,9 @@ struct SchedulingResult {
       folly::Optional<PacketEvent> packetEventIn,
       folly::Optional<PacketBuilderInterface::Packet> packetIn)
       : packetEvent(std::move(packetEventIn)), packet(std::move(packetIn)) {}
+
+  SchedulingResult(SchedulingResult&& rhs)  
+      : packetEvent(std::move(rhs.packetEvent)), packet(std::move(rhs.packet)) {}
 };
 
 /**

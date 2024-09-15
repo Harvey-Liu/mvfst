@@ -173,7 +173,7 @@ class FakeOneRttHandshakeLayer : public FizzClientHandshake {
       transportParams = quicCachedPsk->transportParams;
     }
 
-    const_cast<fizz::client::State&>(getState()).sni() = hostname;
+    getFizzState().sni() = hostname;
 
     connected_ = true;
     writeDataToQuicStream(
@@ -227,17 +227,10 @@ class FakeOneRttHandshakeLayer : public FizzClientHandshake {
 
   void setOneRttWriteCipher(std::unique_ptr<Aead> oneRttWriteCipher) {
     oneRttWriteCipher_ = std::move(oneRttWriteCipher);
-    writeTrafficSecret_ = folly::IOBuf::copyBuffer(getRandSecret());
   }
 
   void setOneRttReadCipher(std::unique_ptr<Aead> oneRttReadCipher) {
     getClientConn()->readCodec->setOneRttReadCipher(
-        std::move(oneRttReadCipher));
-    readTrafficSecret_ = folly::IOBuf::copyBuffer(getRandSecret());
-  }
-
-  void setNextOneRttReadCipher(std::unique_ptr<Aead> oneRttReadCipher) {
-    getClientConn()->readCodec->setNextOneRttReadCipher(
         std::move(oneRttReadCipher));
   }
 
@@ -320,10 +313,6 @@ class FakeOneRttHandshakeLayer : public FizzClientHandshake {
     return params_;
   }
 
-  Buf getNextTrafficSecret(folly::ByteRange /*secret*/) const override {
-    return folly::IOBuf::copyBuffer(getRandSecret());
-  }
-
   void triggerOnNewCachedPsk() {
     fizz::client::NewCachedPsk psk;
     onNewCachedPsk(psk);
@@ -366,12 +355,9 @@ class FakeOneRttHandshakeLayer : public FizzClientHandshake {
   bool matchEarlyParameters() override {
     throw std::runtime_error("matchEarlyParameters not implemented");
   }
-  std::unique_ptr<Aead> buildAead(CipherKind, folly::ByteRange) override {
-    return createNoOpAead();
-  }
-  std::unique_ptr<PacketNumberCipher> buildHeaderCipher(
-      folly::ByteRange) override {
-    throw std::runtime_error("buildHeaderCipher not implemented");
+  std::pair<std::unique_ptr<Aead>, std::unique_ptr<PacketNumberCipher>>
+  buildCiphers(CipherKind, folly::ByteRange) override {
+    throw std::runtime_error("buildCiphers not implemented");
   }
 };
 
@@ -528,14 +514,12 @@ class QuicClientTransportTestBase : public virtual testing::Test {
 
   virtual void setFakeHandshakeCiphers() {
     auto readAead = test::createNoOpAead();
-    auto nextReadAead = test::createNoOpAead();
     auto writeAead = test::createNoOpAead();
     auto handshakeReadAead = test::createNoOpAead();
     auto handshakeWriteAead = test::createNoOpAead();
     mockClientHandshake->setHandshakeReadCipher(std::move(handshakeReadAead));
     mockClientHandshake->setHandshakeWriteCipher(std::move(handshakeWriteAead));
     mockClientHandshake->setOneRttReadCipher(std::move(readAead));
-    mockClientHandshake->setNextOneRttReadCipher(std::move(nextReadAead));
     mockClientHandshake->setOneRttWriteCipher(std::move(writeAead));
 
     mockClientHandshake->setHandshakeReadHeaderCipher(

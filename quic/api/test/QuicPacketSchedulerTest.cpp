@@ -150,8 +150,8 @@ TEST_F(QuicPacketSchedulerTest, CryptoPaddingInitialPacket) {
       conn.cryptoState->initialStream, folly::IOBuf::copyBuffer("chlo"));
   auto result = cryptoOnlyScheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -183,8 +183,8 @@ TEST_F(QuicPacketSchedulerTest, PaddingInitialPureAcks) {
           .build();
   auto result = acksOnlyScheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -217,8 +217,8 @@ TEST_F(QuicPacketSchedulerTest, InitialPaddingDoesNotUseWrapper) {
           .build();
   auto result = acksOnlyScheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen - cipherOverhead);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -250,8 +250,8 @@ TEST_F(QuicPacketSchedulerTest, CryptoServerInitialPadded) {
       conn.cryptoState->initialStream, folly::IOBuf::copyBuffer("shlo"));
   auto result = scheduler.scheduleFramesForPacket(
       std::move(builder1), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -283,8 +283,8 @@ TEST_F(QuicPacketSchedulerTest, PadTwoInitialPackets) {
       conn.cryptoState->initialStream, folly::IOBuf::copyBuffer("shlo"));
   auto result = scheduler.scheduleFramesForPacket(
       std::move(builder1), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 
   increaseNextPacketNum(conn, PacketNumberSpace::Initial);
@@ -302,8 +302,8 @@ TEST_F(QuicPacketSchedulerTest, PadTwoInitialPackets) {
       conn.cryptoState->initialStream, folly::IOBuf::copyBuffer("shlo again"));
   auto result2 = scheduler.scheduleFramesForPacket(
       std::move(builder2), conn.udpSendPacketLen);
-  packetLength = result2.packet->header.computeChainDataLength() +
-      result2.packet->body.computeChainDataLength();
+  packetLength = result2.packet->header->computeChainDataLength() +
+      result2.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -334,8 +334,8 @@ TEST_F(QuicPacketSchedulerTest, CryptoPaddingRetransmissionClientInitial) {
       StreamBuffer{folly::IOBuf::copyBuffer("chlo"), 0, false});
   auto result = scheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -397,8 +397,8 @@ TEST_F(QuicPacketSchedulerTest, CryptoWritePartialLossBuffer) {
       false});
   auto result = cryptoOnlyScheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_LE(packetLength, 25);
   EXPECT_TRUE(result.packet->packet.frames[0].asWriteCryptoFrame() != nullptr);
   EXPECT_FALSE(conn.cryptoState->initialStream.lossBuffer.empty());
@@ -803,12 +803,8 @@ TEST_F(QuicPacketSchedulerTest, CloneSchedulerUseNormalSchedulerFirst) {
             packet.frames.push_back(MaxDataFrame(2832));
             RegularQuicPacketBuilder::Packet builtPacket(
                 std::move(packet),
-                folly::IOBuf(
-                    folly::IOBuf::CopyBufferOp::COPY_BUFFER,
-                    "if you are the dealer"),
-                folly::IOBuf(
-                    folly::IOBuf::CopyBufferOp::COPY_BUFFER,
-                    "I'm out of the game"));
+                folly::IOBuf::copyBuffer("if you are the dealer"),
+                folly::IOBuf::copyBuffer("I'm out of the game"));
             return SchedulingResult(folly::none, std::move(builtPacket));
           }));
   RegularQuicPacketBuilder builder(
@@ -831,9 +827,9 @@ TEST_F(QuicPacketSchedulerTest, CloneSchedulerUseNormalSchedulerFirst) {
   EXPECT_EQ(2832, maxDataFrame->maximumData);
   EXPECT_TRUE(folly::IOBufEqualTo{}(
       *folly::IOBuf::copyBuffer("if you are the dealer"),
-      result.packet->header));
+      *result.packet->header));
   EXPECT_TRUE(folly::IOBufEqualTo{}(
-      *folly::IOBuf::copyBuffer("I'm out of the game"), result.packet->body));
+      *folly::IOBuf::copyBuffer("I'm out of the game"), *result.packet->body));
 }
 
 TEST_F(QuicPacketSchedulerTest, CloneWillGenerateNewWindowUpdate) {
@@ -993,8 +989,8 @@ TEST_F(QuicPacketSchedulerTest, CloningSchedulerWithInplaceBuilderFullPacket) {
   ASSERT_TRUE(scheduler.hasData());
   auto result = scheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto bufferLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto bufferLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, bufferLength);
   updateConnection(
       conn,
@@ -1065,8 +1061,8 @@ TEST_F(QuicPacketSchedulerTest, CloneLargerThanOriginalPacket) {
       conn.ackStates.appDataAckState.largestAckedByPeer.value_or(0));
   auto packetResult = scheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen - cipherOverhead);
-  auto encodedSize = packetResult.packet->body.computeChainDataLength() +
-      packetResult.packet->header.computeChainDataLength() + cipherOverhead;
+  auto encodedSize = packetResult.packet->body->computeChainDataLength() +
+      packetResult.packet->header->computeChainDataLength() + cipherOverhead;
   EXPECT_EQ(encodedSize, conn.udpSendPacketLen);
   updateConnection(
       conn,
@@ -2403,15 +2399,15 @@ TEST_F(QuicPacketSchedulerTest, ShortHeaderPaddingWithSpaceForPadding) {
   auto result2 = scheduler.scheduleFramesForPacket(
       std::move(builder2), conn.udpSendPacketLen);
 
-  auto headerLength1 = result1.packet->header.computeChainDataLength();
-  auto bodyLength1 = result1.packet->body.computeChainDataLength();
+  auto headerLength1 = result1.packet->header->computeChainDataLength();
+  auto bodyLength1 = result1.packet->body->computeChainDataLength();
   auto packetLength1 = headerLength1 + bodyLength1;
   auto expectedPadding1 =
       (conn.udpSendPacketLen - (inputDataLength1 + headerLength1)) %
       paddingModulo;
 
-  auto headerLength2 = result2.packet->header.computeChainDataLength();
-  auto bodyLength2 = result2.packet->body.computeChainDataLength();
+  auto headerLength2 = result2.packet->header->computeChainDataLength();
+  auto bodyLength2 = result2.packet->body->computeChainDataLength();
   auto packetLength2 = headerLength2 + bodyLength2;
   auto expectedPadding2 =
       (conn.udpSendPacketLen - (inputDataLength2 + headerLength2)) %
@@ -2461,8 +2457,8 @@ TEST_F(QuicPacketSchedulerTest, ShortHeaderPaddingNearMaxPacketLength) {
   auto result = scheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
 
-  auto headerLength = result.packet->header.computeChainDataLength();
-  auto bodyLength = result.packet->body.computeChainDataLength();
+  auto headerLength = result.packet->header->computeChainDataLength();
+  auto bodyLength = result.packet->body->computeChainDataLength();
 
   auto packetLength = headerLength + bodyLength;
 
@@ -2516,8 +2512,8 @@ TEST_F(QuicPacketSchedulerTest, ShortHeaderPaddingMaxPacketLength) {
   auto result = scheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
 
-  auto headerLength = result.packet->header.computeChainDataLength();
-  auto bodyLength = result.packet->body.computeChainDataLength();
+  auto headerLength = result.packet->header->computeChainDataLength();
+  auto bodyLength = result.packet->body->computeChainDataLength();
 
   auto packetLength = headerLength + bodyLength;
 
@@ -2555,8 +2551,8 @@ TEST_F(QuicPacketSchedulerTest, ImmediateAckFrameSchedulerOnRequest) {
 
   auto result = immediateAckOnlyScheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   EXPECT_EQ(conn.udpSendPacketLen, packetLength);
 }
 
@@ -2591,8 +2587,8 @@ TEST_F(QuicPacketSchedulerTest, ImmediateAckFrameSchedulerNotRequested) {
 
   auto result = immediateAckOnlyScheduler.scheduleFramesForPacket(
       std::move(builder), conn.udpSendPacketLen);
-  auto packetLength = result.packet->header.computeChainDataLength() +
-      result.packet->body.computeChainDataLength();
+  auto packetLength = result.packet->header->computeChainDataLength() +
+      result.packet->body->computeChainDataLength();
   // The immediate ACK scheduler was not triggered. This packet has no frames
   // and it shouldn't get padded.
   EXPECT_LT(packetLength, conn.udpSendPacketLen);

@@ -339,8 +339,16 @@ void processClientInitialParams(
     maxUdpPayloadSize = std::min(*packetSize, maxUdpPayloadSize);
     conn.peerMaxUdpPayloadSize = maxUdpPayloadSize;
     if (conn.transportSettings.canIgnorePathMTU) {
-      *packetSize = std::min<uint64_t>(*packetSize, kDefaultMaxUDPPayload);
-      conn.udpSendPacketLen = *packetSize;
+      if (*packetSize > kDefaultMaxUDPPayload) {
+        // A good peer should never set oversized limit, so to be safe we
+        // fallback to default
+        conn.udpSendPacketLen = kDefaultUDPSendPacketLen;
+      } else {
+        // Otherwise, canIgnorePathMTU forces us to immediately set
+        // udpSendPacketLen
+        // TODO: rename "canIgnorePathMTU" to "forciblySetPathMTU"
+        conn.udpSendPacketLen = maxUdpPayloadSize;
+      }
     }
   }
 
@@ -378,9 +386,9 @@ void updateHandshakeState(QuicServerConnectionState& conn) {
   // However, the cipher is only exported to QUIC if early data attempt is
   // accepted. Otherwise, the cipher will be available after cfin is
   // processed.
-  auto oneRttWriteCipher = handshakeLayer->getFirstOneRttWriteCipher();
+  auto oneRttWriteCipher = handshakeLayer->getOneRttWriteCipher();
   // One RTT read cipher is available after cfin is processed.
-  auto oneRttReadCipher = handshakeLayer->getFirstOneRttReadCipher();
+  auto oneRttReadCipher = handshakeLayer->getOneRttReadCipher();
 
   auto oneRttWriteHeaderCipher = handshakeLayer->getOneRttWriteHeaderCipher();
   auto oneRttReadHeaderCipher = handshakeLayer->getOneRttReadHeaderCipher();
@@ -411,7 +419,6 @@ void updateHandshakeState(QuicServerConnectionState& conn) {
           "Duplicate 1-rtt write cipher", TransportErrorCode::CRYPTO_ERROR);
     }
     conn.oneRttWriteCipher = std::move(oneRttWriteCipher);
-    conn.oneRttWritePhase = ProtectionType::KeyPhaseZero;
 
     updatePacingOnKeyEstablished(conn);
 
@@ -433,8 +440,6 @@ void updateHandshakeState(QuicServerConnectionState& conn) {
     conn.isClientAddrVerified = true;
     conn.writableBytesLimit.reset();
     conn.readCodec->setOneRttReadCipher(std::move(oneRttReadCipher));
-    conn.readCodec->setNextOneRttReadCipher(
-        handshakeLayer->getNextOneRttReadCipher());
   }
   auto handshakeReadCipher = handshakeLayer->getHandshakeReadCipher();
   auto handshakeReadHeaderCipher =
@@ -823,7 +828,6 @@ void onServerReadDataFromOpen(
     const CryptoFactory& cryptoFactory =
         conn.serverHandshakeLayer->getCryptoFactory();
     conn.readCodec = std::make_unique<QuicReadCodec>(QuicNodeType::Server);
-    conn.readCodec->setConnectionStatsCallback(conn.statsCallback);
     conn.readCodec->setInitialReadCipher(cryptoFactory.getClientInitialCipher(
         initialDestinationConnectionId, version));
     conn.readCodec->setClientConnectionId(clientConnectionId);
@@ -1035,12 +1039,9 @@ void onServerReadDataFromOpen(
               conn,
               packetNumberSpace,
               ackFrame,
-              [&](const OutstandingPacketWrapper& outstandingPacket,
+              [&](const OutstandingPacketWrapper&,
                   const QuicWriteFrame& packetFrame,
                   const ReadAckFrame&) {
-                maybeVerifyPendingKeyUpdate(
-                    conn, outstandingPacket, regularPacket);
-
                 switch (packetFrame.type()) {
                   case QuicWriteFrame::Type::WriteStreamFrame: {
                     const WriteStreamFrame& frame =
@@ -1295,8 +1296,6 @@ void onServerReadDataFromOpen(
       handshakeConfirmed(conn);
     }
 
-    maybeHandleIncomingKeyUpdate(conn);
-
     // Update writable limit before processing the handshake data. This is so
     // that if we haven't decided whether or not to validate the peer, we won't
     // increase the limit.
@@ -1493,8 +1492,6 @@ void onServerReadDataFromClosed(
   if (conn.qLogger) {
     conn.qLogger->addPacket(regularPacket, packetSize);
   }
-
-  // TODO: Should we honor a key update from the peer on a closed connection?
 
   // Only process the close frames in the packet
   for (auto& quicFrame : regularPacket.frames) {

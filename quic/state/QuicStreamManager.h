@@ -468,6 +468,15 @@ class QuicStreamManager {
    */
   bool setStreamPriority(StreamId id, Priority priority);
 
+  // TODO figure out a better interface here.
+  /*
+   * Returns a mutable reference to the container holding the writable stream
+   * IDs.
+   */
+  auto& writableStreams() {
+    return writableStreams_;
+  }
+
   auto& writableDSRStreams() {
     return writableDSRStreams_;
   }
@@ -828,9 +837,12 @@ class QuicStreamManager {
   /*
    * Consume the flow control updated streams using the parameter vector.
    */
-  std::vector<StreamId> consumeFlowControlUpdated() {
-    std::vector<StreamId> result(
-        flowControlUpdated_.begin(), flowControlUpdated_.end());
+  auto consumeFlowControlUpdated(std::vector<StreamId>&& storage) {
+    std::vector<StreamId> result = storage;
+    result.clear();
+    result.reserve(flowControlUpdated_.size());
+    result.insert(
+        result.end(), flowControlUpdated_.begin(), flowControlUpdated_.end());
     flowControlUpdated_.clear();
     return result;
   }
@@ -924,24 +936,23 @@ class QuicStreamManager {
   /*
    * Consume the new peer streams using the parameter vector.
    */
-  std::vector<StreamId> consumeNewPeerStreams() {
-    std::vector<StreamId> res{std::move(newPeerStreams_)};
-    return res;
+  auto consumeNewPeerStreams(std::vector<StreamId>&& storage) {
+    return swapStreams(newPeerStreams_, std::move(storage));
   }
 
   /*
    * Consume the new peer streams in groups using the parameter vector.
    */
-  std::vector<StreamId> consumeNewGroupedPeerStreams() {
-    std::vector<StreamId> res{std::move(newGroupedPeerStreams_)};
-    return res;
+  auto consumeNewGroupedPeerStreams(std::vector<StreamId>&& storage) {
+    return swapStreams(newGroupedPeerStreams_, std::move(storage));
   }
 
   /*
    * Consume the new peer stream groups using the parameter vector.
    */
   auto consumeNewPeerStreamGroups() {
-    decltype(newPeerStreamGroups_) result{std::move(newPeerStreamGroups_)};
+    decltype(newPeerStreamGroups_) result;
+    result.swap(newPeerStreamGroups_);
     return result;
   }
 
@@ -965,8 +976,10 @@ class QuicStreamManager {
    * Consume the stop sending streams.
    */
   auto consumeStopSending() {
-    std::vector<std::pair<const StreamId, const ApplicationErrorCode>> result(
-        stopSendingStreams_.begin(), stopSendingStreams_.end());
+    std::vector<std::pair<StreamId, ApplicationErrorCode>> result;
+    result.reserve(stopSendingStreams_.size());
+    result.insert(
+        result.end(), stopSendingStreams_.begin(), stopSendingStreams_.end());
     stopSendingStreams_.clear();
     return result;
   }
@@ -1091,6 +1104,20 @@ class QuicStreamManager {
   folly::Expected<StreamGroupId, LocalErrorCode> createNextStreamGroup(
       StreamGroupId& groupId,
       StreamIdSet& streamGroups);
+
+  /*
+   * Helper to consume new stream ids.
+   */
+  std::vector<StreamId> swapStreams(
+      std::vector<StreamId>& src,
+      std::vector<StreamId>&& dst) {
+    std::vector<StreamId> result = dst;
+    result.clear();
+    result.reserve(src.size());
+    result.insert(result.end(), src.begin(), src.end());
+    src.clear();
+    return result;
+  }
 
   QuicConnectionStateBase& conn_;
   QuicNodeType nodeType_;

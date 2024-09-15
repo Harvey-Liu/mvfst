@@ -112,14 +112,12 @@ class FunctionLooper : public QuicEventBaseLoopCallback,
 
   std::shared_ptr<QuicEventBase> evb_;
   folly::Function<void()> func_;
-  folly::Function<std::chrono::microseconds()> pacingFunc_{nullptr};
+  folly::Optional<folly::Function<std::chrono::microseconds()>> pacingFunc_;
   QuicTimer::SharedPtr pacingTimer_;
-  TimePoint nextPacingTime_;
+  bool running_{false};
+  bool inLoopBody_{false};
   const LooperType type_;
-  struct {
-    bool running_ : 1;
-    bool inLoopBody_ : 1;
-    bool fireLoopEarly_ : 1;
-  };
+  TimePoint nextPacingTime_;
+  bool fireLoopEarly_{false};
 };
 } // namespace quic

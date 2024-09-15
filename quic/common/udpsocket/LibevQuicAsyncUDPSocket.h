@@ -109,6 +109,8 @@ class LibevQuicAsyncUDPSocket : public QuicAsyncUDPSocketImpl {
    * Packet timestamping is currently not supported.
    */
   int getTimestamping() override {
+    LOG(WARNING) << __func__
+                 << " is not implemented in LibevQuicAsyncUDPSocket";
     return -1;
   }
 
@@ -122,12 +124,17 @@ class LibevQuicAsyncUDPSocket : public QuicAsyncUDPSocketImpl {
   /**
    * Set SO_RCVBUF option on the socket, if not zero. Default is zero.
    */
-  void setRcvBuf(int rcvBuf) override;
+  void setRcvBuf(int /*rcvBuf*/) override {
+    LOG(FATAL) << __func__ << " not supported in LibevQuicAsyncUDPSocket";
+  }
 
   /**
    * Set SO_SNDBUF option on the socket, if not zero. Default is zero.
    */
-  void setSndBuf(int sndBuf) override;
+  void setSndBuf(int /*sndBuf*/) override {
+    LOG(FATAL) << __func__ << " not supported in LibevQuicAsyncUDPSocket";
+  }
+
   /**
    * Set Dont-Fragment (DF) but ignore Path MTU.
    *
@@ -170,7 +177,6 @@ class LibevQuicAsyncUDPSocket : public QuicAsyncUDPSocketImpl {
 
   void updateReadWatcher();
   void evHandleSocketRead();
-  size_t handleSocketErrors();
 
   int fd_{-1};
   folly::SocketAddress localAddress_;
@@ -184,10 +190,8 @@ class LibevQuicAsyncUDPSocket : public QuicAsyncUDPSocketImpl {
   bool connected_{false};
   bool reuseAddr_{false};
   bool reusePort_{false};
-  int rcvBuf_{0};
-  int sndBuf_{0};
 
   ReadCallback* readCallback_{nullptr};
-  ErrMessageCallback* errMessageCallback_{nullptr};
+  ErrMessageCallback* errMessageCallback_ = nullptr;
 };
 } // namespace quic

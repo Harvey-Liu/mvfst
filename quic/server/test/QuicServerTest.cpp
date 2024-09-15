@@ -25,7 +25,6 @@
 #include <quic/common/udpsocket/FollyQuicAsyncUDPSocket.h>
 #include <quic/congestion_control/ServerCongestionControllerFactory.h>
 #include <quic/fizz/client/handshake/FizzClientQuicHandshakeContext.h>
-#include <quic/fizz/handshake/FizzCryptoFactory.h>
 #include <quic/server/AcceptObserver.h>
 #include <quic/server/SlidingWindowRateLimiter.h>
 #include <quic/server/handshake/StatelessResetGenerator.h>
@@ -348,8 +347,6 @@ void QuicServerWorkerTest::testSendReset(
         codec.setOneRttHeaderCipher(test::createNoOpHeaderCipher());
         StatelessResetToken token = generateStatelessResetToken();
         codec.setStatelessResetToken(token);
-        FizzCryptoFactory cryptoFactory;
-        codec.setCryptoEqual(cryptoFactory.getCryptoEqualFunction());
         overridePacketWithToken(*buf, token);
         AckStates ackStates;
         auto packetQueue = bufToQueue(buf->clone());
@@ -1719,7 +1716,9 @@ TEST_F(QuicServerWorkerTakeoverTest, QuicServerTakeoverReInitHandler) {
 
   EXPECT_CALL(*takeoverSock, bind(_, _));
   EXPECT_CALL(*takeoverSock, resumeRead(_));
-  EXPECT_CALL(*takeoverSock, address()).WillOnce(ReturnRef(takeoverAddr));
+  EXPECT_CALL(*takeoverSock, address()).WillOnce(Invoke([&]() {
+    return takeoverAddr;
+  }));
   takeoverWorker_->overrideTakeoverHandlerAddress(
       std::move(takeoverSock), takeoverAddr);
   takeoverSocket_ = takeoverSock.get();
@@ -2889,8 +2888,6 @@ void QuicServerTest::testReset(Buf packet) {
   codec.setOneRttHeaderCipher(test::createNoOpHeaderCipher());
   StatelessResetToken token = generateStatelessResetToken();
   codec.setStatelessResetToken(token);
-  FizzCryptoFactory cryptoFactory;
-  codec.setCryptoEqual(cryptoFactory.getCryptoEqualFunction());
   AckStates ackStates;
   auto packetBuf = serverData->clone();
   overridePacketWithToken(*packetBuf, token);

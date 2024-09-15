@@ -103,21 +103,7 @@ class QuicClientTransport
   /**
    * Returns whether or not TLS is resumed.
    */
-  virtual bool isTLSResumed() const;
-
-  /*
-   * Export the underlying TLS key material.
-   * label is the label argument for the TLS exporter.
-   * context is the context value argument for the TLS exporter.
-   * keyLength is the length of the exported key.
-   */
-  virtual folly::Optional<std::vector<uint8_t>> getExportedKeyingMaterial(
-      const std::string& label,
-      const folly::Optional<folly::ByteRange>& context,
-      uint16_t keyLength) {
-    return clientConn_->clientHandshakeLayer->getExportedKeyingMaterial(
-        label, context, keyLength);
-  }
+  bool isTLSResumed() const;
 
   enum class ZeroRttAttemptState : uint8_t {
     NotAttempted = 0,
@@ -127,7 +113,7 @@ class QuicClientTransport
   /**
    * Returns the state of the 0RTT attempt if there was one.
    */
-  virtual ZeroRttAttemptState getZeroRttState() {
+  ZeroRttAttemptState getZeroRttState() {
     if (!clientConn_->zeroRttRejected.has_value()) {
       return ZeroRttAttemptState::NotAttempted;
     }

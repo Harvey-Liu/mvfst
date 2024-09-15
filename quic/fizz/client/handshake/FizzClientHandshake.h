@@ -37,20 +37,16 @@ class FizzClientHandshake : public ClientHandshake {
 
   bool isTLSResumed() const override;
 
-  folly::Optional<std::vector<uint8_t>> getExportedKeyingMaterial(
-      const std::string& label,
-      const folly::Optional<folly::ByteRange>& context,
-      uint16_t keyLength) override;
-
-  const fizz::client::State& getState() const {
-    return state_;
-  }
-
  protected:
   folly::Optional<QuicCachedPsk> getPsk(
       const folly::Optional<std::string>& hostname) const;
 
   void onNewCachedPsk(fizz::client::NewCachedPsk& newCachedPsk) noexcept;
+
+  // For tests.
+  fizz::client::State& getFizzState() {
+    return state_;
+  }
 
  private:
   folly::Optional<CachedServerTransportParameters> connectImpl(
@@ -59,11 +55,8 @@ class FizzClientHandshake : public ClientHandshake {
   EncryptionLevel getReadRecordLayerEncryptionLevel() override;
   void processSocketData(folly::IOBufQueue& queue) override;
   bool matchEarlyParameters() override;
-  std::unique_ptr<Aead> buildAead(CipherKind kind, folly::ByteRange secret)
-      override;
-  std::unique_ptr<PacketNumberCipher> buildHeaderCipher(
-      folly::ByteRange secret) override;
-  Buf getNextTrafficSecret(folly::ByteRange secret) const override;
+  std::pair<std::unique_ptr<Aead>, std::unique_ptr<PacketNumberCipher>>
+  buildCiphers(CipherKind kind, folly::ByteRange secret) override;
 
   class ActionMoveVisitor;
   void processActions(fizz::client::Actions actions);

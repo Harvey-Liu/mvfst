@@ -120,13 +120,6 @@ static std::shared_ptr<fizz::SelfCert> readCert() {
       std::move(privKey), std::move(certs));
 }
 
-std::shared_ptr<fizz::client::FizzClientContext> createClientCtx() {
-  auto clientCtx = std::make_shared<fizz::client::FizzClientContext>();
-  clientCtx->setClock(std::make_shared<NiceMock<fizz::test::MockClock>>());
-  clientCtx->setSupportedAlpns({"quic_test"});
-  return clientCtx;
-}
-
 std::shared_ptr<fizz::server::FizzServerContext> createServerCtx() {
   auto cert = readCert();
   auto certManager = std::make_unique<fizz::server::CertManager>();
@@ -136,7 +129,6 @@ std::shared_ptr<fizz::server::FizzServerContext> createServerCtx() {
   serverCtx->setCertManager(std::move(certManager));
   serverCtx->setOmitEarlyRecordLayer(true);
   serverCtx->setClock(std::make_shared<NiceMock<fizz::test::MockClock>>());
-  serverCtx->setSupportedAlpns({"quic_test"});
   return serverCtx;
 }
 
@@ -391,55 +383,47 @@ RegularQuicPacketBuilder::Packet createCryptoPacket(
 }
 
 Buf packetToBuf(const RegularQuicPacketBuilder::Packet& packet) {
-  auto packetBuf = packet.header.clone();
-  if (!packet.body.empty()) {
-    packetBuf->prependChain(packet.body.clone());
+  auto packetBuf = packet.header->clone();
+  if (packet.body) {
+    packetBuf->prependChain(packet.body->clone());
   }
   return packetBuf;
 }
 
 Buf packetToBufCleartext(
-    RegularQuicPacketBuilder::Packet& packet,
+    const RegularQuicPacketBuilder::Packet& packet,
     const Aead& cleartextCipher,
     const PacketNumberCipher& headerCipher,
     PacketNum packetNum) {
   VLOG(10) << __func__ << " packet header: "
-           << folly::hexlify(packet.header.clone()->moveToFbString());
-  auto packetBuf = packet.header.clone();
+           << folly::hexlify(packet.header->clone()->moveToFbString());
+  auto packetBuf = packet.header->clone();
   Buf body;
-  if (!packet.body.empty()) {
-    packet.body.coalesce();
-    body = packet.body.clone();
+  if (packet.body) {
+    packet.body->coalesce();
+    body = packet.body->clone();
   } else {
     body = folly::IOBuf::create(0);
   }
   auto headerForm = packet.packet.header.getHeaderForm();
-  packet.header.coalesce();
+  packet.header->coalesce();
   auto tagLen = cleartextCipher.getCipherOverhead();
   if (body->tailroom() < tagLen) {
     body->prependChain(folly::IOBuf::create(tagLen));
   }
   body->coalesce();
   auto encryptedBody = cleartextCipher.inplaceEncrypt(
-      std::move(body), &packet.header, packetNum);
+      std::move(body), packet.header.get(), packetNum);
   encryptedBody->coalesce();
   encryptPacketHeader(
       headerForm,
-      packet.header.writableData(),
-      packet.header.length(),
+      packet.header->writableData(),
+      packet.header->length(),
       encryptedBody->data(),
       encryptedBody->length(),
       headerCipher);
   packetBuf->prependChain(std::move(encryptedBody));
   return packetBuf;
-}
-
-Buf packetToBufCleartext(
-    RegularQuicPacketBuilder::Packet&& packet,
-    const Aead& cleartextCipher,
-    const PacketNumberCipher& headerCipher,
-    PacketNum packetNum) {
-  return packetToBufCleartext(packet, cleartextCipher, headerCipher, packetNum);
 }
 
 uint64_t computeExpectedDelay(
@@ -739,7 +723,7 @@ writeCryptoFrame(uint64_t offsetIn, Buf data, PacketBuilderInterface& builder) {
 void overridePacketWithToken(
     PacketBuilderInterface::Packet& packet,
     const StatelessResetToken& token) {
-  overridePacketWithToken(packet.body, token);
+  overridePacketWithToken(*packet.body, token);
 }
 
 void overridePacketWithToken(

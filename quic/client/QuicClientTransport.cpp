@@ -407,8 +407,6 @@ void QuicClientTransport::processUdpPacketData(
                 // processing loop.
                 conn_->handshakeLayer->handshakeConfirmed();
               }
-              maybeVerifyPendingKeyUpdate(
-                  *conn_, outstandingPacket, regularPacket);
               switch (packetFrame.type()) {
                 case QuicWriteFrame::Type::WriteAckFrame: {
                   const WriteAckFrame& frame = *packetFrame.asWriteAckFrame();
@@ -654,8 +652,6 @@ void QuicClientTransport::processUdpPacketData(
     handshakeConfirmed(*conn_);
   }
 
-  maybeHandleIncomingKeyUpdate(*conn_);
-
   // Try reading bytes off of crypto, and performing a handshake.
   auto cryptoData = readDataFromCryptoStream(
       *getCryptoStream(*conn_->cryptoState, encryptionLevel));
@@ -782,9 +778,6 @@ void QuicClientTransport::processUdpPacketData(
       if (clientConn_->statelessResetToken) {
         conn_->readCodec->setStatelessResetToken(
             clientConn_->statelessResetToken.value());
-        auto& cryptoFactory = handshakeLayer->getCryptoFactory();
-        conn_->readCodec->setCryptoEqual(
-            cryptoFactory.getCryptoEqualFunction());
       }
     }
 
@@ -918,7 +911,6 @@ void QuicClientTransport::writeData() {
   // use.
   SCOPE_EXIT {
     conn_->pendingEvents.numProbePackets = {};
-    maybeInitiateKeyUpdate(*conn_);
   };
   if (conn_->initialWriteCipher) {
     auto& initialCryptoStream =
@@ -1429,7 +1421,6 @@ void QuicClientTransport::recvMmsg(
 
 void QuicClientTransport::onNotifyDataAvailable(
     QuicAsyncUDPSocket& sock) noexcept {
-  auto self = this->shared_from_this();
   CHECK(conn_) << "trying to receive packets without a connection";
   auto readBufferSize =
       conn_->transportSettings.maxRecvPacketSize * numGROBuffers_;
@@ -1705,7 +1696,6 @@ void QuicClientTransport::setTransportStatsCallback(
   statsCallback_ = std::move(statsCallback);
   if (statsCallback_) {
     conn_->statsCallback = statsCallback_.get();
-    conn_->readCodec->setConnectionStatsCallback(statsCallback_.get());
   } else {
     conn_->statsCallback = nullptr;
   }

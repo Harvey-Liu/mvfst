@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <folly/json/json.h>
+#include <folly/json.h>
 #include <quic/state/TransportSettings.h>
 
 namespace quic {

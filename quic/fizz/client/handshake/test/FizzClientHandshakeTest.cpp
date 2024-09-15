@@ -48,7 +48,8 @@ class ClientHandshakeTest : public Test, public boost::static_visitor<> {
   ClientHandshakeTest() {}
 
   virtual void setupClientAndServerContext() {
-    clientCtx = createClientCtx();
+    clientCtx = std::make_shared<fizz::client::FizzClientContext>();
+    clientCtx->setClock(std::make_shared<fizz::test::MockClock>());
   }
 
   QuicVersion getVersion() {
@@ -297,27 +298,6 @@ class ClientHandshakeTest : public Test, public boost::static_visitor<> {
   std::shared_ptr<fizz::server::FizzServerContext> serverCtx;
 };
 
-TEST_F(ClientHandshakeTest, TestGetExportedKeyingMaterial) {
-  // Sanity check. getExportedKeyingMaterial () should return nullptr prior to
-  // an handshake.
-  auto ekm = handshake->getExportedKeyingMaterial(
-      "EXPORTER-Some-Label", folly::none, 32);
-  EXPECT_TRUE(!ekm.has_value());
-
-  clientServerRound();
-  serverClientRound();
-  handshake->handshakeConfirmed();
-  ekm = handshake->getExportedKeyingMaterial(
-      "EXPORTER-Some-Label", folly::none, 32);
-  ASSERT_TRUE(ekm.has_value());
-  EXPECT_EQ(ekm->size(), 32);
-
-  ekm = handshake->getExportedKeyingMaterial(
-      "EXPORTER-Some-Label", folly::ByteRange(), 32);
-  ASSERT_TRUE(ekm.has_value());
-  EXPECT_EQ(ekm->size(), 32);
-}
-
 TEST_F(ClientHandshakeTest, TestHandshakeSuccess) {
   EXPECT_CALL(*verifier, verify(_));
 
@@ -360,25 +340,11 @@ TEST_F(ClientHandshakeTest, TestRetryIntegrityVerification) {
   LongHeader header(
       LongHeader::Types::Retry, scid, dcid, 0, version, retryToken);
 
-  RetryPacket::IntegrityTagType integrityTag = {
-      0xd1,
-      0x69,
-      0x26,
-      0xd8,
-      0x1f,
-      0x6f,
-      0x9c,
-      0xa2,
-      0x95,
-      0x3a,
-      0x8a,
-      0xa4,
-      0x57,
-      0x5e,
-      0x1e,
-      0x49};
+  std::string integrityTag =
+      "\xd1\x69\x26\xd8\x1f\x6f\x9c\xa2\x95\x3a\x8a\xa4\x57\x5e\x1e\x49";
 
-  RetryPacket retryPacket(std::move(header), integrityTag, initialByte);
+  RetryPacket retryPacket(
+      std::move(header), folly::IOBuf::copyBuffer(integrityTag), initialByte);
 
   std::vector<uint8_t> odcidVec = {
       0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08};
@@ -426,9 +392,10 @@ TEST_F(ClientHandshakeTest, TestAppBytesInterpretedAsHandshake) {
 class ClientHandshakeCallbackTest : public ClientHandshakeTest {
  public:
   void setupClientAndServerContext() override {
-    clientCtx = createClientCtx();
+    clientCtx = std::make_shared<fizz::client::FizzClientContext>();
     clientCtx->setSupportedVersions({fizz::ProtocolVersion::tls_1_3});
     serverCtx->setSupportedVersions({fizz::ProtocolVersion::tls_1_3});
+    clientCtx->setClock(std::make_shared<fizz::test::MockClock>());
     setupZeroRttOnServerCtx(*serverCtx, psk_);
   }
 
@@ -474,13 +441,15 @@ class ClientHandshakeHRRTest : public ClientHandshakeTest {
   ~ClientHandshakeHRRTest() override = default;
 
   void setupClientAndServerContext() override {
-    clientCtx = createClientCtx();
+    clientCtx = std::make_shared<fizz::client::FizzClientContext>();
     clientCtx->setSupportedGroups(
         {fizz::NamedGroup::secp256r1, fizz::NamedGroup::x25519});
     clientCtx->setDefaultShares({fizz::NamedGroup::secp256r1});
-    serverCtx = createServerCtx();
+    clientCtx->setClock(std::make_shared<fizz::test::MockClock>());
+    serverCtx = std::make_shared<fizz::server::FizzServerContext>();
     serverCtx->setFactory(std::make_shared<QuicFizzFactory>());
     serverCtx->setSupportedGroups({fizz::NamedGroup::x25519});
+    serverCtx->setClock(std::make_shared<fizz::test::MockClock>());
     setupCtxWithTestCert(*serverCtx);
   }
 };
@@ -524,11 +493,13 @@ class ClientHandshakeZeroRttTest : public ClientHandshakeTest {
   ~ClientHandshakeZeroRttTest() override = default;
 
   void setupClientAndServerContext() override {
-    clientCtx = createClientCtx();
+    clientCtx = std::make_shared<fizz::client::FizzClientContext>();
     clientCtx->setSupportedVersions({fizz::ProtocolVersion::tls_1_3});
     clientCtx->setSupportedAlpns({"h3", "hq"});
+    clientCtx->setClock(std::make_shared<fizz::test::MockClock>());
     serverCtx->setSupportedVersions({fizz::ProtocolVersion::tls_1_3});
     serverCtx->setSupportedAlpns({"h3"});
+    serverCtx->setClock(std::make_shared<fizz::test::MockClock>());
     setupCtxWithTestCert(*serverCtx);
     psk = setupZeroRttOnClientCtx(*clientCtx, hostname);
     setupZeroRttServer();

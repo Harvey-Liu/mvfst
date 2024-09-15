@@ -62,6 +62,12 @@ TEST_F(DSRPacketizerSingleWriteTest, SingleWrite) {
   auto batchWriter = BatchWriterPtr(testBatchWriter);
   auto socket =
       std::make_unique<NiceMock<quic::test::MockAsyncUDPSocket>>(qEvb_);
+  IOBufQuicBatch ioBufBatch(
+      std::move(batchWriter),
+      *socket,
+      peerAddress,
+      nullptr /* statsCallback */,
+      nullptr /* happyEyeballsState */);
   PacketNum packetNum = 20;
   PacketNum largestAckedByPeer = 0;
   StreamId streamId = 0;
@@ -70,9 +76,8 @@ TEST_F(DSRPacketizerSingleWriteTest, SingleWrite) {
   bool eof = false;
   auto dcid = test::getTestConnectionId();
   SimpleBufAccessor accessor{16 * kDefaultMaxUDPPayload};
-  UdpSocketPacketGroupWriter packetGroupWriter(
-      *socket, peerAddress, std::move(batchWriter));
-  auto ret = packetGroupWriter.writeSingleQuicPacket(
+  auto ret = writeSingleQuicPacket(
+      ioBufBatch,
       accessor,
       dcid,
       packetNum,
@@ -93,16 +98,20 @@ TEST_F(DSRPacketizerSingleWriteTest, SingleWrite) {
           dcid.size() /* dcid */ + 1 /* stream frame initial byte */ +
           1 /* stream id */ + length /* actual data */ +
           aead->getCipherOverhead());
-  packetGroupWriter.getIOBufQuicBatch().flush();
-  EXPECT_EQ(1, packetGroupWriter.getIOBufQuicBatch().getPktSent());
+  ioBufBatch.flush();
+  EXPECT_EQ(1, ioBufBatch.getPktSent());
 }
 
 TEST_F(DSRPacketizerSingleWriteTest, NotEnoughData) {
   auto batchWriter = BatchWriterPtr(new test::TestPacketBatchWriter(16));
   auto socket =
       std::make_unique<NiceMock<quic::test::MockAsyncUDPSocket>>(qEvb_);
-  UdpSocketPacketGroupWriter packetGroupWriter(
-      *socket, peerAddress, std::move(batchWriter));
+  IOBufQuicBatch ioBufBatch(
+      std::move(batchWriter),
+      *socket,
+      peerAddress,
+      nullptr /* statsCallback */,
+      nullptr /* happyEyeballsState */);
   PacketNum packetNum = 20;
   PacketNum largestAckedByPeer = 0;
   StreamId streamId = 0;
@@ -110,7 +119,8 @@ TEST_F(DSRPacketizerSingleWriteTest, NotEnoughData) {
   size_t length = 100;
   bool eof = false;
   SimpleBufAccessor accessor{16 * kDefaultMaxUDPPayload};
-  auto ret = packetGroupWriter.writeSingleQuicPacket(
+  auto ret = writeSingleQuicPacket(
+      ioBufBatch,
       accessor,
       test::getTestConnectionId(),
       packetNum,
@@ -123,8 +133,8 @@ TEST_F(DSRPacketizerSingleWriteTest, NotEnoughData) {
       eof,
       folly::IOBuf::copyBuffer("Clif"));
   EXPECT_FALSE(ret);
-  packetGroupWriter.getIOBufQuicBatch().flush();
-  EXPECT_EQ(0, packetGroupWriter.getIOBufQuicBatch().getPktSent());
+  ioBufBatch.flush();
+  EXPECT_EQ(0, ioBufBatch.getPktSent());
 }
 
 class DSRMultiWriteTest : public DSRCommonTestFixture {
@@ -200,10 +210,8 @@ TEST_F(DSRMultiWriteTest, TwoRequestsWithLoss) {
   for (const auto& i : pendingInstructions_) {
     requests.requests.push_back(sendInstructionToPacketizationRequest(i));
   }
-
-  UdpSocketPacketGroupWriter packetGroupWriter(*sock, requests.clientAddress);
-  auto result = packetGroupWriter.writePacketsGroup(
-      requests, [](const PacketizationRequest& req) {
+  auto result =
+      writePacketsGroup(*sock, requests, [](const PacketizationRequest& req) {
         return buildRandomInputData(req.len);
       });
   EXPECT_EQ(2, result.packetsSent);

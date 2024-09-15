@@ -311,7 +311,7 @@ WriteQuicDataResult writeProbingDataToSocket(
     const std::string& token = std::string());
 
 HeaderBuilder LongHeaderBuilder(LongHeader::Types packetType);
-HeaderBuilder ShortHeaderBuilder(ProtectionType keyPhase);
+HeaderBuilder ShortHeaderBuilder();
 
 void maybeSendStreamLimitUpdates(QuicConnectionStateBase& conn);
 
@@ -328,16 +328,4 @@ bool writeLoopTimeLimit(
 bool toWriteInitialAcks(const quic::QuicConnectionStateBase& conn);
 bool toWriteHandshakeAcks(const quic::QuicConnectionStateBase& conn);
 bool toWriteAppDataAcks(const quic::QuicConnectionStateBase& conn);
-
-void updateOneRttWriteCipher(
-    QuicConnectionStateBase& conn,
-    std::unique_ptr<Aead> aead,
-    ProtectionType oneRttPhase);
-void maybeHandleIncomingKeyUpdate(QuicConnectionStateBase& conn);
-void maybeInitiateKeyUpdate(QuicConnectionStateBase& conn);
-void maybeVerifyPendingKeyUpdate(
-    QuicConnectionStateBase& conn,
-    const OutstandingPacketWrapper& outstandingPacket,
-    const RegularQuicPacket& ackPacket);
-
 } // namespace quic

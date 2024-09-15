@@ -89,7 +89,7 @@ void QuicServerWorker::bind(
     case SetEventCallback::RECVMSG_MULTISHOT:
       socket_->setRecvmsgMultishotCallback(this);
       break;
-  }
+  };
   // TODO this totally doesn't work, we can't apply socket options before
   // bind, since bind creates the fd.
   if (socketOptions_) {
@@ -841,7 +841,7 @@ void QuicServerWorker::dispatchPacketData(
   // route with destinationConnId chosen by the peer and IP address of the
   // peer.
   CHECK(routingData.headerForm == HeaderForm::Long);
-  auto sit = sourceAddressMap_.find(std::make_pair(client, dstConnId));
+  auto sit = sourceAddressMap_.find(std::pair<folly::SocketAddress, ConnectionId>(client, dstConnId));
   if (sit != sourceAddressMap_.end()) {
     VLOG(4) << "Found existing connection for client=" << client << " "
             << sit->second.get();
@@ -1087,12 +1087,8 @@ void QuicServerWorker::sendRetryPacket(
       folly::IOBuf::copyBuffer(encryptedTokenStr));
   Buf pseudoRetryPacketBuf = std::move(pseudoBuilder).buildPacket();
   FizzRetryIntegrityTagGenerator fizzRetryIntegrityTagGenerator;
-  auto integrityTagBuf = fizzRetryIntegrityTagGenerator.getRetryIntegrityTag(
+  auto integrityTag = fizzRetryIntegrityTagGenerator.getRetryIntegrityTag(
       QuicVersion::MVFST_INVALID, pseudoRetryPacketBuf.get());
-  folly::io::Cursor cursor{integrityTagBuf.get()};
-
-  RetryPacket::IntegrityTagType integrityTag = {0};
-  cursor.pull(integrityTag.data(), integrityTag.size());
 
   // Create the actual retry packet
   RetryPacketBuilder builder(
@@ -1100,7 +1096,7 @@ void QuicServerWorker::sendRetryPacket(
       srcConnId, /* dst conn id */
       QuicVersion::MVFST_INVALID,
       std::move(encryptedTokenStr),
-      integrityTag);
+      std::move(integrityTag));
 
   auto retryData = std::move(builder).buildPacket();
   auto retryDataLen = retryData->computeChainDataLength();

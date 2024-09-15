@@ -2644,7 +2644,8 @@ TEST_F(QuicClientTransportAfterStartTest, ShortHeaderPacketWithNoFrames) {
       0 /* largestAcked */);
   builder.encodePacketHeader();
   ASSERT_TRUE(builder.canBuildPacket());
-  Buf buf = packetToBuf(std::move(builder).buildPacket());
+  auto packet = std::move(builder).buildPacket();
+  auto buf = packetToBuf(packet);
   buf->coalesce();
   buf->reserve(0, 200);
   buf->append(20);
@@ -5801,7 +5802,7 @@ TEST_P(QuicProcessDataTest, ProcessDataHeaderOnly) {
       aead,
       0 /* largestAcked */);
 
-  deliverData(serverAddr, packet.header.coalesce());
+  deliverData(serverAddr, packet.header->coalesce());
   EXPECT_EQ(
       getAckState(client->getConn(), PacketNumberSpace::Handshake)
           .largestRecvdPacketNum,

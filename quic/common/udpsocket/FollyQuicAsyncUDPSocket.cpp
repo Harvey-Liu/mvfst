@@ -235,8 +235,10 @@ void FollyQuicAsyncUDPSocket::FollyReadCallbackWrapper::onDataAvailable(
 }
 
 void FollyQuicAsyncUDPSocket::FollyReadCallbackWrapper::onNotifyDataAvailable(
-    folly::AsyncUDPSocket&) noexcept {
-  CHECK(parentSocket_ != nullptr);
+    folly::AsyncUDPSocket& socket) noexcept {
+  CHECK(
+      parentSocket_ != nullptr &&
+      parentSocket_->getFD() == socket.getNetworkSocket().toFd());
   return wrappedReadCallback_->onNotifyDataAvailable(*parentSocket_);
 }
 

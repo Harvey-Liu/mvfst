@@ -8,14 +8,9 @@
 #include <quic/common/BufAccessor.h>
 
 namespace quic {
-
-SimpleBufAccessor::SimpleBufAccessor(Buf buf)
-    : buf_(std::move(buf)), capacity_(buf_->capacity()) {
-  CHECK(!buf_->isShared() && !buf_->isChained());
-}
-
 SimpleBufAccessor::SimpleBufAccessor(size_t capacity)
-    : SimpleBufAccessor(folly::IOBuf::createCombined(capacity)) {}
+    : buf_(folly::IOBuf::createCombined(capacity)),
+      capacity_(buf_->capacity()) {}
 
 Buf SimpleBufAccessor::obtain() {
   Buf ret;
