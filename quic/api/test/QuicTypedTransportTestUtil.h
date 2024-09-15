@@ -216,9 +216,7 @@ class QuicTypedTransportTestBase : protected QuicTransportTestClass {
    */
   quic::Buf buildPeerPacketWithStreamData(
       const quic::StreamId streamId,
-      Buf data,
-      folly::Optional<ProtectionType> shortHeaderProtectionOverride =
-          folly::none) {
+      Buf data) {
     auto buf = quic::test::packetToBuf(createStreamPacket(
         getSrcConnectionId(),
         getDstConnectionId(),
@@ -231,8 +229,7 @@ class QuicTypedTransportTestBase : protected QuicTransportTestClass {
         // // should meet the needs of the majority of tests...
         // getConn().ackStates.appDataAckState.largestAckedByPeer.value_or(0),
         folly::none /* longHeaderOverride */,
-        false /* eof */,
-        shortHeaderProtectionOverride));
+        false /* eof */));
     buf->coalesce();
     return buf;
   }

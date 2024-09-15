@@ -40,7 +40,7 @@ size_t getWorkerToRouteTo(
       numWorkers;
 }
 
-constexpr std::string_view kQuicServerNotInitialized =
+const std::string_view kQuicServerNotInitialized =
     "Quic server is not initialized. "
     "Consider calling waitUntilInitialized() prior to: ";
 

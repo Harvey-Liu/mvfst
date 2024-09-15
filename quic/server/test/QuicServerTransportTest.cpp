@@ -1707,8 +1707,8 @@ TEST_F(QuicServerTransportTest, ShortHeaderPacketWithNoFrames) {
       0 /* largestAcked */);
   builder.encodePacketHeader();
   ASSERT_TRUE(builder.canBuildPacket());
-  Buf buf = packetToBuf(std::move(builder).buildPacket());
-
+  auto packet = std::move(builder).buildPacket();
+  auto buf = packetToBuf(packet);
   buf->coalesce();
   buf->reserve(0, 200);
   buf->append(dummyDataLen);
@@ -1758,7 +1758,8 @@ TEST_F(QuicServerTransportTest, ShortHeaderPacketWithNoFramesAfterClose) {
       0 /* largestAcked */);
   builder.encodePacketHeader();
   ASSERT_TRUE(builder.canBuildPacket());
-  Buf buf = packetToBuf(std::move(builder).buildPacket());
+  auto packet = std::move(builder).buildPacket();
+  auto buf = packetToBuf(packet);
   buf->coalesce();
   buf->reserve(0, 200);
   buf->append(dummyDataLen);
@@ -4211,7 +4212,7 @@ TEST_F(QuicUnencryptedServerTransportTest, MaxReceivePacketSizeTooLarge) {
   fakeHandshake->maxRecvPacketSize = 4096;
   setupClientReadCodec();
   recvClientHello();
-  EXPECT_EQ(server->getConn().udpSendPacketLen, kDefaultMaxUDPPayload);
+  EXPECT_EQ(server->getConn().udpSendPacketLen, kDefaultUDPSendPacketLen);
 }
 
 TEST_F(QuicUnencryptedServerTransportTest, TestGarbageData) {
@@ -5249,59 +5250,6 @@ TEST_F(QuicServerTransportTest, WriteDSR) {
   EXPECT_CALL(*rawDSRSender, release()).Times(1);
   server->resetStream(streamId, GenericApplicationErrorCode::NO_ERROR);
   EXPECT_EQ(server->getConn().dsrPacketCount, 6);
-}
-
-class QuicServerTransportCertTest : public QuicServerTransportTest {
- protected:
-  class MockCert : public fizz::Cert {
-    std::string getIdentity() const override {
-      return "";
-    }
-  };
-};
-
-TEST_F(QuicServerTransportCertTest, TestGetPeerCertificate) {
-  auto& conn = getFakeHandshakeLayer()->conn_;
-
-  // have handshake layer, but no client cert
-  EXPECT_NE(conn.serverHandshakeLayer, nullptr);
-  EXPECT_EQ(server->getPeerCertificate(), nullptr);
-
-  // have client cert
-  auto mockCert = std::make_shared<MockCert>();
-  const_cast<fizz::server::State&>(conn.serverHandshakeLayer->getState())
-      .clientCert() = mockCert;
-  EXPECT_EQ(server->getPeerCertificate(), mockCert);
-
-  // no handshake layer
-  auto* serverHandshakeLayer = conn.serverHandshakeLayer;
-  conn.serverHandshakeLayer = nullptr;
-  EXPECT_EQ(server->getPeerCertificate(), nullptr);
-
-  // to prevent crash
-  conn.serverHandshakeLayer = serverHandshakeLayer;
-}
-
-TEST_F(QuicServerTransportCertTest, TestGetSelfCertificate) {
-  auto& conn = getFakeHandshakeLayer()->conn_;
-
-  // have handshake layer, but no server cert
-  EXPECT_NE(conn.serverHandshakeLayer, nullptr);
-  EXPECT_EQ(server->getSelfCertificate(), nullptr);
-
-  // have server cert
-  auto mockCert = std::make_shared<MockCert>();
-  const_cast<fizz::server::State&>(conn.serverHandshakeLayer->getState())
-      .serverCert() = mockCert;
-  EXPECT_EQ(server->getSelfCertificate(), mockCert);
-
-  // no handshake layer
-  auto* serverHandshakeLayer = conn.serverHandshakeLayer;
-  conn.serverHandshakeLayer = nullptr;
-  EXPECT_EQ(server->getSelfCertificate(), nullptr);
-
-  // to prevent crash
-  conn.serverHandshakeLayer = serverHandshakeLayer;
 }
 
 } // namespace test

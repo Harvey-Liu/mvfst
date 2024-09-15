@@ -47,16 +47,20 @@ class PacketBuilderInterface {
   // and body into a continuous memory.
   struct Packet {
     RegularQuicWritePacket packet;
-    folly::IOBuf header;
-    folly::IOBuf body;
+    Buf header;
+    Buf body;
 
-    Packet(
-        RegularQuicWritePacket packetIn,
-        folly::IOBuf headerIn,
-        folly::IOBuf&& bodyIn)
+    Packet() = default;
+
+    Packet(RegularQuicWritePacket packetIn, Buf headerIn, Buf bodyIn)
         : packet(std::move(packetIn)),
           header(std::move(headerIn)),
           body(std::move(bodyIn)) {}
+
+    Packet(Packet&& rhs)
+        : packet(std::move(rhs.packet)),
+          header(std::move(rhs.header)),
+          body(std::move(rhs.body)) {}
   };
 
   FOLLY_NODISCARD virtual uint32_t remainingSpaceInPkt() const = 0;
@@ -257,8 +261,8 @@ class RegularQuicPacketBuilder final : public PacketBuilderInterface {
   uint32_t remainingBytes_;
   PacketNum largestAckedPacketNum_;
   RegularQuicWritePacket packet_;
-  folly::IOBuf header_;
-  folly::IOBuf body_;
+  std::unique_ptr<folly::IOBuf> header_;
+  std::unique_ptr<folly::IOBuf> body_;
   BufAppender headerAppender_;
   BufAppender bodyAppender_;
 
@@ -306,8 +310,8 @@ class RegularSizeEnforcedPacketBuilder : public WrapperPacketBuilderInterface {
 
  private:
   RegularQuicWritePacket packet_;
-  folly::IOBuf header_;
-  folly::IOBuf body_;
+  Buf header_;
+  Buf body_;
   BufAppender bodyAppender_;
   uint64_t enforcedSize_;
   uint32_t cipherOverhead_;
@@ -342,8 +346,8 @@ class InplaceSizeEnforcedPacketBuilder : public WrapperPacketBuilderInterface {
   BufAccessor& bufAccessor_;
   Buf iobuf_;
   RegularQuicWritePacket packet_;
-  folly::IOBuf header_;
-  folly::IOBuf body_;
+  Buf header_;
+  Buf body_;
   uint64_t enforcedSize_;
   uint32_t cipherOverhead_;
 };
@@ -412,7 +416,7 @@ class RetryPacketBuilder {
       ConnectionId destinationConnectionId,
       QuicVersion quicVersion,
       std::string&& retryToken,
-      RetryPacket::IntegrityTagType integrityTag);
+      Buf&& integrityTag);
 
   uint32_t remainingSpaceInPkt();
 
@@ -433,7 +437,7 @@ class RetryPacketBuilder {
   ConnectionId destinationConnectionId_;
   QuicVersion quicVersion_;
   std::string retryToken_;
-  RetryPacket::IntegrityTagType integrityTag_;
+  Buf integrityTag_;
 
   uint32_t remainingBytes_;
 };

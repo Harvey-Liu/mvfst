@@ -7,6 +7,7 @@
 
 #include <quic/codec/QuicReadCodec.h>
 
+#include <fizz/crypto/Utils.h>
 #include <folly/io/Cursor.h>
 #include <quic/codec/Decode.h>
 #include <quic/codec/PacketNumber.h>
@@ -106,9 +107,11 @@ CodecResult QuicReadCodec::parseLongHeaderPacket(
   auto longHeader = std::move(parsedLongHeader.header);
 
   if (type == LongHeader::Types::Retry) {
-    auto integrityTag = cursor.read<RetryPacket::IntegrityTagType>();
+    Buf integrityTag;
+    cursor.clone(integrityTag, kRetryIntegrityTagLen);
     queue.move();
-    return RetryPacket(std::move(longHeader), integrityTag, initialByte);
+    return RetryPacket(
+        std::move(longHeader), std::move(integrityTag), initialByte);
   }
 
   uint64_t packetNumberOffset = cursor.getCurrentPosition();
@@ -285,62 +288,23 @@ CodecResult QuicReadCodec::tryParseShortHeaderPacket(
     return CodecResult(Nothing());
   }
   shortHeader->setPacketNumber(packetNum.first);
-  bool peerKeyUpdateAttempt = false;
-  auto oneRttReadCipherToUse = [&]() -> Aead* {
-    if (shortHeader->getProtectionType() == currentOneRttReadPhase_) {
-      return currentOneRttReadCipher_.get();
-    } else {
-      // This is a packet from a different phase. It may be encrypted using the
-      // next key (new peer-initiated key update) or the previous key (out of
-      // order packet or pending locally-initiated key update).
-
-      if (!currentOneRttReadPhaseStartPacketNum_ ||
-          shortHeader->getPacketSequenceNum() <
-              currentOneRttReadPhaseStartPacketNum_.value()) {
-        // There is either a pending key update or this an out-of-order packet,
-        // attempt to use the previous cipher
-        if (previousOneRttReadCipher_) {
-          return previousOneRttReadCipher_.get();
-        } else {
-          // There is no previous packet. We can't decrypt this packet
-          VLOG(4)
-              << nodeToString(nodeType_)
-              << " cannot read packet using previous cipher. Cipher is not available";
-          return nullptr;
-        }
-      } else {
-        // This is a key update attempt
-        if (nextOneRttReadCipher_) {
-          peerKeyUpdateAttempt = true;
-          QUIC_STATS(statsCallback_, onKeyUpdateAttemptReceived);
-          return nextOneRttReadCipher_.get();
-        } else {
-          // The next cipher is not yet available. We can't decrypt this packet
-          VLOG(4)
-              << nodeToString(nodeType_)
-              << " unable to process key update. Next cipher is not yet available";
-          return nullptr;
-        }
-      }
-    }
-  }();
-
-  if (oneRttReadCipherToUse == nullptr) {
-    return CodecResult(
-        CipherUnavailable(std::move(data), shortHeader->getProtectionType()));
+  if (shortHeader->getProtectionType() == ProtectionType::KeyPhaseOne) {
+    VLOG(4) << nodeToString(nodeType_) << " cannot read key phase one packet "
+            << connIdToHex();
+    return CodecResult(Nothing());
   }
 
-  // We know that the iobuf is not chained. This means that we can safely have
-  // a non-owning reference to the header without cloning the buffer. If we
-  // don't clone the buffer, the buffer will not show up as shared and we can
-  // decrypt in-place.
+  // We know that the iobuf is not chained. This means that we can safely have a
+  // non-owning reference to the header without cloning the buffer. If we don't
+  // clone the buffer, the buffer will not show up as shared and we can decrypt
+  // in-place.
   size_t aadLen = packetNumberOffset + packetNum.second;
   folly::IOBuf headerData =
       folly::IOBuf::wrapBufferAsValue(data->data(), aadLen);
   data->trimStart(aadLen);
 
   Buf decrypted;
-  auto decryptAttempt = oneRttReadCipherToUse->tryDecrypt(
+  auto decryptAttempt = oneRttReadCipher_->tryDecrypt(
       std::move(data), &headerData, packetNum.first);
   if (!decryptAttempt) {
     auto protectionType = shortHeader->getProtectionType();
@@ -354,29 +318,6 @@ CodecResult QuicReadCodec::tryParseShortHeaderPacket(
     // TODO better way of handling this (tests break without this)
     decrypted = folly::IOBuf::create(0);
   }
-
-  if (peerKeyUpdateAttempt) {
-    // Peer initiated a key update and we've successfully decrypted a packet
-    // from the next phase. We should advance our oneRttCipher state.
-    currentOneRttReadPhase_ = shortHeader->getProtectionType();
-    currentOneRttReadPhaseStartPacketNum_.reset();
-    previousOneRttReadCipher_.reset(currentOneRttReadCipher_.release());
-    currentOneRttReadCipher_.reset(nextOneRttReadCipher_.release());
-    // nextOneRttReadCipher_ will be populated by the transport
-  }
-
-  if (!currentOneRttReadPhaseStartPacketNum_.has_value() &&
-      oneRttReadCipherToUse == currentOneRttReadCipher_.get()) {
-    // This is the first packet in the current phase. Record the packet
-    // number. This applies for both peer-initiated and self-initiated key
-    // updates.
-    currentOneRttReadPhaseStartPacketNum_ = shortHeader->getPacketSequenceNum();
-    QUIC_STATS(statsCallback_, onKeyUpdateAttemptSucceeded);
-  }
-
-  // TODO: Should we discard the previous cipher at some point? Keeping it
-  // around avoids the timing signals mentioned in the spec, but we could also
-  // drop it after 3 * PTO.
 
   return decodeRegularPacket(
       std::move(*shortHeader), params_, std::move(decrypted));
@@ -399,8 +340,9 @@ CodecResult QuicReadCodec::parsePacket(
   if (headerForm == HeaderForm::Long) {
     return parseLongHeaderPacket(queue, ackStates);
   }
-  // Missing 1-rtt header cipher is the only case we wouldn't consider reset
-  if (!currentOneRttReadCipher_ || !oneRttHeaderCipher_) {
+  // Missing 1-rtt Cipher is the only case we wouldn't consider reset
+  // TODO: support key phase one.
+  if (!oneRttReadCipher_ || !oneRttHeaderCipher_) {
     VLOG(4) << nodeToString(nodeType_) << " cannot read key phase zero packet";
     VLOG(20) << "cannot read data="
              << folly::hexlify(queue.front()->clone()->moveToFbString()) << " "
@@ -417,13 +359,8 @@ CodecResult QuicReadCodec::parsePacket(
     if (statelessResetToken_ && dataLength > sizeof(StatelessResetToken)) {
       const uint8_t* tokenSource =
           data->data() + (dataLength - sizeof(StatelessResetToken));
-      if (!cryptoEqual_) {
-        throw QuicInternalException(
-            "crypto constant time comparison function is not set.",
-            LocalErrorCode::INTERNAL_ERROR);
-      }
       // Only allocate & copy the token if it matches the token we have
-      if (cryptoEqual_(
+      if (fizz::CryptoUtils::equal(
               folly::ByteRange(tokenSource, sizeof(StatelessResetToken)),
               folly::ByteRange(
                   statelessResetToken_->data(), sizeof(StatelessResetToken)))) {
@@ -441,31 +378,8 @@ CodecResult QuicReadCodec::parsePacket(
   return maybeShortHeaderPacket;
 }
 
-bool QuicReadCodec::canInitiateKeyUpdate() const {
-  if (!nextOneRttReadCipher_ || !currentOneRttReadPhaseStartPacketNum_) {
-    // We haven't received any packets in the current oneRtt phase yet.
-    return false;
-  }
-  return true;
-}
-
-bool QuicReadCodec::advanceOneRttReadPhase() {
-  if (!canInitiateKeyUpdate()) {
-    LOG(WARNING) << "Key update requested before the read codec can allow it";
-    return false;
-  }
-  previousOneRttReadCipher_.reset(currentOneRttReadCipher_.release());
-  currentOneRttReadCipher_.reset(nextOneRttReadCipher_.release());
-  currentOneRttReadPhase_ =
-      (currentOneRttReadPhase_ == ProtectionType::KeyPhaseZero)
-      ? ProtectionType::KeyPhaseOne
-      : ProtectionType::KeyPhaseZero;
-  currentOneRttReadPhaseStartPacketNum_.reset();
-  return true;
-}
-
 const Aead* QuicReadCodec::getOneRttReadCipher() const {
-  return currentOneRttReadCipher_.get();
+  return oneRttReadCipher_.get();
 }
 
 const Aead* QuicReadCodec::getZeroRttReadCipher() const {
@@ -492,12 +406,7 @@ void QuicReadCodec::setInitialReadCipher(
 
 void QuicReadCodec::setOneRttReadCipher(
     std::unique_ptr<Aead> oneRttReadCipher) {
-  currentOneRttReadCipher_ = std::move(oneRttReadCipher);
-}
-
-void QuicReadCodec::setNextOneRttReadCipher(
-    std::unique_ptr<Aead> oneRttReadCipher) {
-  nextOneRttReadCipher_ = std::move(oneRttReadCipher);
+  oneRttReadCipher_ = std::move(oneRttReadCipher);
 }
 
 void QuicReadCodec::setZeroRttReadCipher(
@@ -551,16 +460,6 @@ void QuicReadCodec::setStatelessResetToken(
   statelessResetToken_ = std::move(statelessResetToken);
 }
 
-void QuicReadCodec::setCryptoEqual(
-    std::function<bool(folly::ByteRange, folly::ByteRange)> cryptoEqual) {
-  cryptoEqual_ = std::move(cryptoEqual);
-}
-
-void QuicReadCodec::setConnectionStatsCallback(
-    QuicTransportStatsCallback* callback) {
-  statsCallback_ = callback;
-}
-
 const ConnectionId& QuicReadCodec::getClientConnectionId() const {
   return clientConnectionId_.value();
 }
@@ -597,10 +496,6 @@ void QuicReadCodec::onHandshakeDone(TimePoint handshakeDoneTime) {
 
 folly::Optional<TimePoint> QuicReadCodec::getHandshakeDoneTime() {
   return handshakeDoneTime_;
-}
-
-ProtectionType QuicReadCodec::getCurrentOneRttReadPhase() const {
-  return currentOneRttReadPhase_;
 }
 
 std::string QuicReadCodec::connIdToHex() const {

@@ -21,53 +21,38 @@ void libEvTimeoutCallback(
   wrapper->timeoutExpired();
 }
 
-void libEvPrepareCallback(
+void libEvCheckCallback(
     struct ev_loop* /* loop */,
-    ev_prepare* w,
+    ev_check* w,
     int /* revents */) {
   auto self = static_cast<quic::LibevQuicEventBase*>(w->data);
   CHECK(self != nullptr);
   self->checkCallbacks();
 }
-
-class FunctionLoopCallback : public quic::QuicEventBaseLoopCallback {
- public:
-  explicit FunctionLoopCallback(folly::Function<void()>&& func)
-      : func_(std::move(func)) {}
-  void runLoopCallback() noexcept override {
-    func_();
-    delete this;
-  }
-
- private:
-  folly::Function<void()> func_;
-};
-
 } // namespace
 
 namespace quic {
 LibevQuicEventBase::LibevQuicEventBase(struct ev_loop* loop) : ev_loop_(loop) {
   loopThreadId_.store(std::this_thread::get_id(), std::memory_order_release);
-  ev_prepare_init(&prepareWatcher_, libEvPrepareCallback);
-  prepareWatcher_.data = this;
-  ev_prepare_start(ev_loop_, &prepareWatcher_);
+  ev_check_init(&checkWatcher_, libEvCheckCallback);
+  checkWatcher_.data = this;
+  ev_check_start(ev_loop_, &checkWatcher_);
 }
 
 LibevQuicEventBase::~LibevQuicEventBase() {
-  ev_prepare_stop(ev_loop_, &prepareWatcher_);
+  ev_check_stop(ev_loop_, &checkWatcher_);
 }
 
 void LibevQuicEventBase::runInLoop(
     folly::Function<void()> cb,
-    bool thisIteration) {
+    bool /* thisIteration */) {
   CHECK(isInEventBaseThread());
-  auto wrapper = new FunctionLoopCallback(std::move(cb));
-  runInLoop(wrapper, thisIteration);
+  cb();
 }
 
 void LibevQuicEventBase::runInLoop(
     QuicEventBaseLoopCallback* callback,
-    bool thisIteration) {
+    bool /* thisIteration */) {
   CHECK(isInEventBaseThread());
   auto wrapper = static_cast<LoopCallbackWrapper*>(getImplHandle(callback));
   if (!wrapper) {
@@ -75,12 +60,13 @@ void LibevQuicEventBase::runInLoop(
     QuicEventBase::setImplHandle(callback, wrapper);
   }
   if (!wrapper->listHook_.is_linked()) {
-    if (runOnceCallbackWrappers_ != nullptr && thisIteration) {
-      runOnceCallbackWrappers_->push_back(*wrapper);
-    } else {
-      loopCallbackWrappers_.push_back(*wrapper);
-    }
+    loopCallbackWrappers_.push_back(*wrapper);
   }
+}
+
+void LibevQuicEventBase::runInEventBaseThreadAndWait(
+    folly::Function<void()> fn) noexcept {
+  fn();
 }
 
 void LibevQuicEventBase::scheduleTimeout(
@@ -109,8 +95,8 @@ void LibevQuicEventBase::scheduleTimeout(
   auto wrapper =
       static_cast<TimerCallbackWrapper*>(getImplHandle(timerCallback));
   if (wrapper == nullptr) {
-    // This is the first time this timer callback is getting scheduled. Create
-    // a wrapper for it.
+    // This is the first time this timer callback is getting scheduled. Create a
+    // wrapper for it.
     wrapper = new TimerCallbackWrapper(timerCallback, ev_loop_);
     wrapper->ev_timer_.data = wrapper;
     ev_timer_init(
@@ -128,26 +114,17 @@ void LibevQuicEventBase::scheduleTimeout(
 }
 
 void LibevQuicEventBase::checkCallbacks() {
-  // Keep the event base alive while we are running the callbacks.
-  auto self = this->shared_from_this();
-
-  // Running the callbacks in the loop callback list may change the contents
-  // of the list. We swap the list here to be able to differentiate between
-  // adding callbacks to the current loop and the next one.
+  // Running the callbacks in the loop callback list may change the contents of
+  // the list or completely delete the list (with the event base). We swap the
+  // list here to ensure the list survives until the end of the function.
   folly::IntrusiveList<LoopCallbackWrapper, &LoopCallbackWrapper::listHook_>
       currentLoopWrappers;
   loopCallbackWrappers_.swap(currentLoopWrappers);
-
-  // We keep a pointer to the list of callbacks we are currently handling. This
-  // is where callbacks for thisIteration would be added.
-  runOnceCallbackWrappers_ = &currentLoopWrappers;
   while (!currentLoopWrappers.empty()) {
     // runLoopCallback first unlinks the callback wrapper from the list.
-    // This allows the callback to schedule itself again in the same loop or the
-    // next one.
+    // This allows the callback to schedule itself again on the swapped list.
     currentLoopWrappers.front().runLoopCallback();
   }
-  runOnceCallbackWrappers_ = nullptr;
 }
 
 bool LibevQuicEventBase::isInEventBaseThread() const {

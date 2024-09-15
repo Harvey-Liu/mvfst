@@ -55,13 +55,6 @@ class MockClientHandshake : public ClientHandshake {
   MOCK_METHOD(void, removePsk, (const folly::Optional<std::string>&));
   MOCK_METHOD(const CryptoFactory&, getCryptoFactory, (), (const));
   MOCK_METHOD(bool, isTLSResumed, (), (const));
-  MOCK_METHOD(
-      folly::Optional<std::vector<uint8_t>>,
-      getExportedKeyingMaterial,
-      (const std::string& label,
-       const folly::Optional<folly::ByteRange>& context,
-       uint16_t keyLength),
-      ());
   MOCK_METHOD(folly::Optional<bool>, getZeroRttRejected, ());
   MOCK_METHOD(
       const folly::Optional<ServerTransportParameters>&,
@@ -77,14 +70,9 @@ class MockClientHandshake : public ClientHandshake {
   MOCK_METHOD(void, processSocketData, (folly::IOBufQueue & queue));
   MOCK_METHOD(bool, matchEarlyParameters, ());
   MOCK_METHOD(
-      std::unique_ptr<Aead>,
-      buildAead,
+      (std::pair<std::unique_ptr<Aead>, std::unique_ptr<PacketNumberCipher>>),
+      buildCiphers,
       (ClientHandshake::CipherKind kind, folly::ByteRange secret));
-  MOCK_METHOD(
-      std::unique_ptr<PacketNumberCipher>,
-      buildHeaderCipher,
-      (folly::ByteRange secret));
-  MOCK_METHOD(Buf, getNextTrafficSecret, (folly::ByteRange secret), (const));
   MOCK_METHOD(
       const folly::Optional<std::string>&,
       getApplicationProtocol,

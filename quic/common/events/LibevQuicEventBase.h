@@ -26,10 +26,7 @@ namespace quic {
  * (It is copied from the previous interface in
  * quic/common/QuicLibevEventBase.h)
  */
-class LibevQuicEventBase
-    : public QuicEventBase,
-      public QuicTimer,
-      public std::enable_shared_from_this<LibevQuicEventBase> {
+class LibevQuicEventBase : public QuicEventBase, public QuicTimer {
  public:
   explicit LibevQuicEventBase(struct ev_loop* loop);
   ~LibevQuicEventBase() override;
@@ -40,6 +37,9 @@ class LibevQuicEventBase
 
   void runInLoop(folly::Function<void()> cb, bool thisIteration = false)
       override;
+
+  void runInEventBaseThreadAndWait(
+      folly::Function<void()> fn) noexcept override;
 
   bool isInEventBaseThread() const override;
 
@@ -59,7 +59,7 @@ class LibevQuicEventBase
       std::chrono::microseconds timeout) override;
 
   bool loop() override {
-    return ev_run(ev_loop_, EVRUN_NOWAIT);
+    return ev_run(ev_loop_, 0);
   }
 
   bool loopIgnoreKeepAlive() override {
@@ -67,11 +67,6 @@ class LibevQuicEventBase
   }
 
   void runInEventBaseThread(folly::Function<void()> /*fn*/) noexcept override {
-    LOG(FATAL) << __func__ << " not supported in LibevQuicEventBase";
-  }
-
-  void runInEventBaseThreadAndWait(
-      folly::Function<void()> /*fn*/) noexcept override {
     LOG(FATAL) << __func__ << " not supported in LibevQuicEventBase";
   }
 
@@ -86,24 +81,26 @@ class LibevQuicEventBase
   }
 
   bool loopOnce(int /*flags*/) override {
-    return ev_run(ev_loop_, EVRUN_ONCE | EVRUN_NOWAIT);
+    LOG(FATAL) << __func__ << " not supported in LibevQuicEventBase";
   }
 
   void loopForever() override {
-    ev_run(ev_loop_, 0);
+    LOG(FATAL) << __func__ << " not supported in LibevQuicEventBase";
   }
 
   void terminateLoopSoon() override {
-    ev_break(ev_loop_, EVBREAK_ALL);
+    LOG(WARNING) << __func__ << " is not implemented in LibevQuicEventBase";
   }
 
   [[nodiscard]] std::chrono::milliseconds getTimerTickInterval()
       const override {
-    return std::chrono::milliseconds(1);
+    LOG(WARNING) << __func__ << " is not implemented in LibevQuicEventBase";
+    return std::chrono::milliseconds(0);
   }
 
   [[nodiscard]] std::chrono::microseconds getTickInterval() const override {
-    return std::chrono::milliseconds(1);
+    LOG(WARNING) << __func__ << " is not implemented in LibevQuicEventBase";
+    return std::chrono::microseconds(0);
   }
 
   struct ev_loop* getLibevLoop() {
@@ -186,17 +183,7 @@ class LibevQuicEventBase
 
   folly::IntrusiveList<LoopCallbackWrapper, &LoopCallbackWrapper::listHook_>
       loopCallbackWrappers_;
-
-  // This will be null most of the time, but point to the current list of
-  // callbacks if we are in the middle of running loop callbacks, such that
-  // runInLoop(..., true) will always run in the current loop
-  // iteration.
-  folly::IntrusiveList<LoopCallbackWrapper, &LoopCallbackWrapper::listHook_>*
-      runOnceCallbackWrappers_{nullptr};
-
-  // ev_prepare is supposed to run before the loop goes to sleep.
-  // We're using it to execute delayed work given to us via runInLoop.
-  ev_prepare prepareWatcher_;
+  ev_check checkWatcher_;
   std::atomic<std::thread::id> loopThreadId_;
 };
 } // namespace quic

@@ -126,7 +126,7 @@ WriteQuicDataResult writeQuicDataToSocketImpl(
     uint64_t packetLimit,
     bool exceptCryptoStream,
     TimePoint writeLoopBeginTime) {
-  auto builder = ShortHeaderBuilder(connection.oneRttWritePhase);
+  auto builder = ShortHeaderBuilder();
   WriteQuicDataResult result;
   auto& packetsWritten = result.packetsWritten;
   auto& probesWritten = result.probesWritten;
@@ -261,7 +261,7 @@ DataPathResult continuousMemoryBuildScheduleEncrypt(
     }
     return DataPathResult::makeBuildFailure();
   }
-  if (packet->body.empty()) {
+  if (!packet->body) {
     // No more space remaining.
     rollbackBuf();
     ioBufBatch.flush();
@@ -270,20 +270,21 @@ DataPathResult continuousMemoryBuildScheduleEncrypt(
     }
     return DataPathResult::makeBuildFailure();
   }
-  CHECK(!packet->header.isChained());
-  auto headerLen = packet->header.length();
+  CHECK(!packet->header->isChained());
+  auto headerLen = packet->header->length();
   buf = connection.bufAccessor->obtain();
   CHECK(
-      packet->body.data() > buf->data() && packet->body.tail() <= buf->tail());
+      packet->body->data() > buf->data() &&
+      packet->body->tail() <= buf->tail());
   CHECK(
-      packet->header.data() >= buf->data() &&
-      packet->header.tail() < buf->tail());
+      packet->header->data() >= buf->data() &&
+      packet->header->tail() < buf->tail());
   // Trim off everything before the current packet, and the header length, so
   // buf's data starts from the body part of buf.
   buf->trimStart(prevSize + headerLen);
   // buf and packetBuf is actually the same.
   auto packetBuf =
-      aead.inplaceEncrypt(std::move(buf), &packet->header, packetNum);
+      aead.inplaceEncrypt(std::move(buf), packet->header.get(), packetNum);
   CHECK(packetBuf->headroom() == headerLen + prevSize);
   // Include header back.
   packetBuf->prepend(headerLen);
@@ -344,7 +345,7 @@ DataPathResult iobufChainBasedBuildScheduleEncrypt(
     }
     return DataPathResult::makeBuildFailure();
   }
-  if (packet->body.empty()) {
+  if (!packet->body) {
     // No more space remaining.
     ioBufBatch.flush();
     if (connection.loopDetectorCallback) {
@@ -352,20 +353,20 @@ DataPathResult iobufChainBasedBuildScheduleEncrypt(
     }
     return DataPathResult::makeBuildFailure();
   }
-  packet->header.coalesce();
-  auto headerLen = packet->header.length();
-  auto bodyLen = packet->body.computeChainDataLength();
+  packet->header->coalesce();
+  auto headerLen = packet->header->length();
+  auto bodyLen = packet->body->computeChainDataLength();
   auto unencrypted = folly::IOBuf::createCombined(
       headerLen + bodyLen + aead.getCipherOverhead());
-  auto bodyCursor = folly::io::Cursor(&packet->body);
+  auto bodyCursor = folly::io::Cursor(packet->body.get());
   bodyCursor.pull(unencrypted->writableData() + headerLen, bodyLen);
   unencrypted->advance(headerLen);
   unencrypted->append(bodyLen);
-  auto packetBuf =
-      aead.inplaceEncrypt(std::move(unencrypted), &packet->header, packetNum);
+  auto packetBuf = aead.inplaceEncrypt(
+      std::move(unencrypted), packet->header.get(), packetNum);
   DCHECK(packetBuf->headroom() == headerLen);
   packetBuf->clear();
-  auto headerCursor = folly::io::Cursor(&packet->header);
+  auto headerCursor = folly::io::Cursor(packet->header.get());
   headerCursor.pull(packetBuf->writableData(), headerLen);
   packetBuf->append(headerLen + bodyLen + aead.getCipherOverhead());
 
@@ -844,20 +845,6 @@ void updateConnection(
   conn.lossState.totalStreamBytesSent += streamBytesSent;
   conn.lossState.totalNewStreamBytesSent += newStreamBytesSent;
 
-  // Count the number of packets sent in the current phase.
-  // This is used to initiate key updates if enabled.
-  if (packet.header.getProtectionType() == conn.oneRttWritePhase) {
-    if (conn.oneRttWritePendingVerification &&
-        conn.oneRttWritePacketsSentInCurrentPhase == 0) {
-      // This is the first packet in the new phase after we have initiated a key
-      // update. We need to keep track of it to confirm the peer acks it in the
-      // same phase.
-      conn.oneRttWritePendingVerificationPacketNumber =
-          packet.header.getPacketSequenceNum();
-    }
-    conn.oneRttWritePacketsSentInCurrentPhase++;
-  }
-
   if (!retransmittable && !isPing) {
     DCHECK(!packetEvent);
     return;
@@ -1023,14 +1010,13 @@ HeaderBuilder LongHeaderBuilder(LongHeader::Types packetType) {
   };
 }
 
-HeaderBuilder ShortHeaderBuilder(ProtectionType keyPhase) {
-  return [keyPhase](
-             const ConnectionId& /* srcConnId */,
-             const ConnectionId& dstConnId,
-             PacketNum packetNum,
-             QuicVersion,
-             const std::string&) {
-    return ShortHeader(keyPhase, dstConnId, packetNum);
+HeaderBuilder ShortHeaderBuilder() {
+  return [](const ConnectionId& /* srcConnId */,
+            const ConnectionId& dstConnId,
+            PacketNum packetNum,
+            QuicVersion,
+            const std::string&) {
+    return ShortHeader(ProtectionType::KeyPhaseZero, dstConnId, packetNum);
   };
 }
 
@@ -1276,23 +1262,22 @@ void writeCloseCommon(
     return;
   }
   auto packet = std::move(packetBuilder).buildPacket();
-  packet.header.coalesce();
-  packet.body.reserve(0, aead.getCipherOverhead());
-  CHECK_GE(packet.body.tailroom(), aead.getCipherOverhead());
-  auto bufUniquePtr = packet.body.clone();
-  bufUniquePtr =
-      aead.inplaceEncrypt(std::move(bufUniquePtr), &packet.header, packetNum);
-  bufUniquePtr->coalesce();
+  packet.header->coalesce();
+  packet.body->reserve(0, aead.getCipherOverhead());
+  CHECK_GE(packet.body->tailroom(), aead.getCipherOverhead());
+  auto body = aead.inplaceEncrypt(
+      std::move(packet.body), packet.header.get(), packetNum);
+  body->coalesce();
   encryptPacketHeader(
       headerForm,
-      packet.header.writableData(),
-      packet.header.length(),
-      bufUniquePtr->data(),
-      bufUniquePtr->length(),
+      packet.header->writableData(),
+      packet.header->length(),
+      body->data(),
+      body->length(),
       headerCipher);
-  folly::IOBuf packetBuf(std::move(packet.header));
-  packetBuf.prependChain(std::move(bufUniquePtr));
-  auto packetSize = packetBuf.computeChainDataLength();
+  auto packetBuf = std::move(packet.header);
+  packetBuf->prependChain(std::move(body));
+  auto packetSize = packetBuf->computeChainDataLength();
   if (connection.qLogger) {
     connection.qLogger->addPacket(packet.packet, packetSize);
   }
@@ -1302,9 +1287,7 @@ void writeCloseCommon(
   // Increment the sequence number.
   increaseNextPacketNum(connection, pnSpace);
   // best effort writing to the socket, ignore any errors.
-
-  Buf packetBufPtr = packetBuf.clone();
-  auto ret = sock.write(connection.peerAddress, packetBufPtr);
+  auto ret = sock.write(connection.peerAddress, packetBuf);
   connection.lossState.totalBytesSent += packetSize;
   if (ret < 0) {
     VLOG(4) << "Error writing connection close " << folly::errnoStr(errno)
@@ -1353,7 +1336,7 @@ void writeShortClose(
     const Aead& aead,
     const PacketNumberCipher& headerCipher) {
   auto header = ShortHeader(
-      connection.oneRttWritePhase,
+      ProtectionType::KeyPhaseZero,
       connId,
       getNextPacketNum(connection, PacketNumberSpace::AppData));
   writeCloseCommon(
@@ -1918,90 +1901,4 @@ bool toWriteAppDataAcks(const quic::QuicConnectionStateBase& conn) {
       hasAcksToSchedule(conn.ackStates.appDataAckState) &&
       conn.ackStates.appDataAckState.needsToSendAckImmediately);
 }
-
-void updateOneRttWriteCipher(
-    quic::QuicConnectionStateBase& conn,
-    std::unique_ptr<Aead> aead,
-    ProtectionType oneRttPhase) {
-  CHECK(
-      oneRttPhase == ProtectionType::KeyPhaseZero ||
-      oneRttPhase == ProtectionType::KeyPhaseOne);
-  CHECK(oneRttPhase != conn.oneRttWritePhase)
-      << "Cannot replace cipher for current write phase";
-  conn.oneRttWriteCipher = std::move(aead);
-  conn.oneRttWritePhase = oneRttPhase;
-  conn.oneRttWritePacketsSentInCurrentPhase = 0;
-}
-
-void maybeHandleIncomingKeyUpdate(QuicConnectionStateBase& conn) {
-  if (conn.readCodec->getCurrentOneRttReadPhase() != conn.oneRttWritePhase) {
-    // Peer has initiated a key update.
-    if (conn.transportSettings.rejectIncomingKeyUpdates) {
-      throw QuicTransportException(
-          "key update attempt rejected", TransportErrorCode::CRYPTO_ERROR);
-    }
-    updateOneRttWriteCipher(
-        conn,
-        conn.handshakeLayer->getNextOneRttWriteCipher(),
-        conn.readCodec->getCurrentOneRttReadPhase());
-
-    conn.readCodec->setNextOneRttReadCipher(
-        conn.handshakeLayer->getNextOneRttReadCipher());
-  }
-}
-
-void maybeInitiateKeyUpdate(QuicConnectionStateBase& conn) {
-  if (conn.transportSettings.initiateKeyUpdate) {
-    auto packetsBeforeNextUpdate =
-        conn.transportSettings.firstKeyUpdatePacketCount
-        ? conn.transportSettings.firstKeyUpdatePacketCount.value()
-        : conn.transportSettings.keyUpdatePacketCountInterval;
-
-    if ((conn.oneRttWritePacketsSentInCurrentPhase > packetsBeforeNextUpdate) &&
-        conn.readCodec->canInitiateKeyUpdate()) {
-      QUIC_STATS(conn.statsCallback, onKeyUpdateAttemptInitiated);
-      conn.readCodec->advanceOneRttReadPhase();
-      conn.transportSettings.firstKeyUpdatePacketCount.clear();
-
-      updateOneRttWriteCipher(
-          conn,
-          conn.handshakeLayer->getNextOneRttWriteCipher(),
-          conn.readCodec->getCurrentOneRttReadPhase());
-      conn.readCodec->setNextOneRttReadCipher(
-          conn.handshakeLayer->getNextOneRttReadCipher());
-      // Signal the transport that a key update has been initiated.
-      conn.oneRttWritePendingVerification = true;
-      conn.oneRttWritePendingVerificationPacketNumber.clear();
-    }
-  }
-}
-
-void maybeVerifyPendingKeyUpdate(
-    QuicConnectionStateBase& conn,
-    const OutstandingPacketWrapper& outstandingPacket,
-    const RegularQuicPacket& ackPacket) {
-  if (!(protectionTypeToEncryptionLevel(
-            outstandingPacket.packet.header.getProtectionType()) ==
-        EncryptionLevel::AppData)) {
-    // This is not an app data packet. We can't have initiated a key update yet.
-    return;
-  }
-
-  if (conn.oneRttWritePendingVerificationPacketNumber &&
-      outstandingPacket.packet.header.getPacketSequenceNum() >=
-          conn.oneRttWritePendingVerificationPacketNumber.value()) {
-    // There is a pending key update. This packet should be acked in
-    // the current phase.
-    if (ackPacket.header.getProtectionType() == conn.oneRttWritePhase) {
-      // Key update is verified.
-      conn.oneRttWritePendingVerificationPacketNumber.clear();
-      conn.oneRttWritePendingVerification = false;
-    } else {
-      throw QuicTransportException(
-          "Packet with key update was acked in the wrong phase",
-          TransportErrorCode::CRYPTO_ERROR);
-    }
-  }
-}
-
 } // namespace quic

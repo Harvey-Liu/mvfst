@@ -76,22 +76,11 @@ quic::CongestionControlConfig parseCongestionControlConfig(
        {"leaveHeadroomForCwndLimited", ccaConfig.leaveHeadroomForCwndLimited},
        {"ignoreInflightHi", ccaConfig.ignoreInflightHi},
        {"ignoreLoss", ccaConfig.ignoreLoss},
-       {"enableRenoCoexistence", ccaConfig.enableRenoCoexistence}}};
+       {"advanceCycleAfterStartup", ccaConfig.advanceCycleAfterStartup}}};
 
   for (const auto& [name, field] : boolFields) {
     if (auto val = ccaConfigDyn.get_ptr(name)) {
       field = val->asBool();
-    }
-  }
-
-  // Parse optional float fields
-  const std::array<std::pair<std::string, float&>, 2> floatFields = {
-      {{"overrideCruisePacingGain", ccaConfig.overrideCruisePacingGain},
-       {"overrideCruiseCwndGain", ccaConfig.overrideCruiseCwndGain}}};
-
-  for (const auto& [name, field] : floatFields) {
-    if (auto val = ccaConfigDyn.get_ptr(name)) {
-      field = static_cast<float>(val->asDouble());
     }
   }
 

@@ -15,7 +15,6 @@
 #include <quic/common/BufUtil.h>
 #include <quic/handshake/Aead.h>
 #include <quic/state/AckStates.h>
-#include <quic/state/QuicTransportStatsCallback.h>
 
 namespace quic {
 
@@ -127,13 +126,10 @@ class QuicReadCodec {
 
   const folly::Optional<StatelessResetToken>& getStatelessResetToken() const;
 
-  [[nodiscard]] ProtectionType getCurrentOneRttReadPhase() const;
-
   CodecParameters getCodecParameters() const;
 
   void setInitialReadCipher(std::unique_ptr<Aead> initialReadCipher);
   void setOneRttReadCipher(std::unique_ptr<Aead> oneRttReadCipher);
-  void setNextOneRttReadCipher(std::unique_ptr<Aead> oneRttReadCipher);
   void setZeroRttReadCipher(std::unique_ptr<Aead> zeroRttReadCipher);
   void setHandshakeReadCipher(std::unique_ptr<Aead> handshakeReadCipher);
 
@@ -150,29 +146,8 @@ class QuicReadCodec {
   void setClientConnectionId(ConnectionId connId);
   void setServerConnectionId(ConnectionId connId);
   void setStatelessResetToken(StatelessResetToken statelessResetToken);
-  void setCryptoEqual(
-      std::function<bool(folly::ByteRange, folly::ByteRange)> cryptoEqual);
   const ConnectionId& getClientConnectionId() const;
   const ConnectionId& getServerConnectionId() const;
-
-  void setConnectionStatsCallback(QuicTransportStatsCallback* callback);
-
-  /**
-   * Returns true if the (local) transport can initiate a key update. This is
-   * true if:
-   *    - the nextOneRttReadCipher is available, and
-   *    - we have received enough packets in the current one rtt phase.
-   */
-  [[nodiscard]] bool canInitiateKeyUpdate() const;
-
-  /*
-   * Advance the current one rtt read cipher to the next one.
-   * This discards the previous one rtt read cipher and leaves the next one rtt
-   * read cipher unset.
-   *
-   * Returns true if the cipher was successfully advanced.
-   */
-  bool advanceOneRttReadPhase();
 
   /**
    * Should be invoked when the state machine believes that the handshake is
@@ -203,17 +178,9 @@ class QuicReadCodec {
   // Cipher used to decrypt handshake packets.
   std::unique_ptr<Aead> initialReadCipher_;
 
+  std::unique_ptr<Aead> oneRttReadCipher_;
   std::unique_ptr<Aead> zeroRttReadCipher_;
   std::unique_ptr<Aead> handshakeReadCipher_;
-
-  std::unique_ptr<Aead> previousOneRttReadCipher_;
-  std::unique_ptr<Aead> currentOneRttReadCipher_;
-  std::unique_ptr<Aead> nextOneRttReadCipher_;
-  ProtectionType currentOneRttReadPhase_{ProtectionType::KeyPhaseZero};
-  // The packet number of the first packet in the current 1-RTT phase
-  // It's not set when a key update is ongoing (i.e. the write key has been
-  // updated but no packets have been received with the corresponding read key)
-  folly::Optional<PacketNum> currentOneRttReadPhaseStartPacketNum_{0};
 
   std::unique_ptr<PacketNumberCipher> initialHeaderCipher_;
   std::unique_ptr<PacketNumberCipher> oneRttHeaderCipher_;
@@ -221,10 +188,7 @@ class QuicReadCodec {
   std::unique_ptr<PacketNumberCipher> handshakeHeaderCipher_;
 
   folly::Optional<StatelessResetToken> statelessResetToken_;
-  std::function<bool(folly::ByteRange, folly::ByteRange)> cryptoEqual_;
   folly::Optional<TimePoint> handshakeDoneTime_;
-
-  QuicTransportStatsCallback* statsCallback_{nullptr};
 };
 
 } // namespace quic

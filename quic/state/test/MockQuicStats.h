@@ -75,9 +75,6 @@ class MockQuicStats : public QuicTransportStatsCallback {
   MOCK_METHOD(void, onPeerMaxUniStreamsLimitSaturated, ());
   MOCK_METHOD(void, onPeerMaxBidiStreamsLimitSaturated, ());
   MOCK_METHOD(void, onConnectionIdCreated, (size_t));
-  MOCK_METHOD(void, onKeyUpdateAttemptInitiated, ());
-  MOCK_METHOD(void, onKeyUpdateAttemptReceived, ());
-  MOCK_METHOD(void, onKeyUpdateAttemptSucceeded, ());
 };
 
 class MockQuicStatsFactory : public QuicTransportStatsCallbackFactory {

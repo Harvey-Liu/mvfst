@@ -89,26 +89,18 @@ void FizzServerHandshake::processSocketData(folly::IOBufQueue& queue) {
       machine_.processSocketData(state_, queue, fizz::Aead::AeadOptions()));
 }
 
-std::unique_ptr<Aead> FizzServerHandshake::buildAead(folly::ByteRange secret) {
-  return FizzAead::wrap(fizz::Protocol::deriveRecordAeadWithLabel(
+std::pair<std::unique_ptr<Aead>, std::unique_ptr<PacketNumberCipher>>
+FizzServerHandshake::buildCiphers(folly::ByteRange secret) {
+  auto aead = FizzAead::wrap(fizz::Protocol::deriveRecordAeadWithLabel(
       *state_.context()->getFactory(),
       *state_.keyScheduler(),
       *state_.cipher(),
       secret,
       kQuicKeyLabel,
       kQuicIVLabel));
-}
-std::unique_ptr<PacketNumberCipher> FizzServerHandshake::buildHeaderCipher(
-    folly::ByteRange secret) {
-  return cryptoFactory_->makePacketNumberCipher(secret);
-}
+  auto headerCipher = cryptoFactory_->makePacketNumberCipher(secret);
 
-Buf FizzServerHandshake::getNextTrafficSecret(folly::ByteRange secret) const {
-  auto deriver =
-      state_.context()->getFactory()->makeKeyDeriver(*state_.cipher());
-  auto nextSecret = deriver->expandLabel(
-      secret, kQuicKULabel, folly::IOBuf::create(0), secret.size());
-  return nextSecret;
+  return {std::move(aead), std::move(headerCipher)};
 }
 
 void FizzServerHandshake::processAccept() {

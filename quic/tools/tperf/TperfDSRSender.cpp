@@ -40,9 +40,8 @@ bool TperfDSRSender::flush() {
     prs.requests.push_back(
         test::sendInstructionToPacketizationRequest(instruction));
   }
-  quic::UdpSocketPacketGroupWriter packetGroupWriter(sock_, prs.clientAddress);
-  auto written = packetGroupWriter.writePacketsGroup(
-      prs, [=](const PacketizationRequest& req) {
+  auto written =
+      writePacketsGroup(sock_, prs, [=](const PacketizationRequest& req) {
         Buf buf;
         uint64_t remainingLen = req.len;
         do {

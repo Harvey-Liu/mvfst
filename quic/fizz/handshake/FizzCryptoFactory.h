@@ -32,9 +32,6 @@ class FizzCryptoFactory : public CryptoFactory {
   virtual std::unique_ptr<PacketNumberCipher> makePacketNumberCipher(
       fizz::CipherSuite cipher) const;
 
-  [[nodiscard]] std::function<bool(folly::ByteRange, folly::ByteRange)>
-  getCryptoEqualFunction() const override;
-
   std::shared_ptr<fizz::Factory> getFizzFactory() {
     return fizzFactory_;
   }

@@ -94,10 +94,9 @@ class QuicTransportBase : public QuicSocket, QuicStreamPrioritiesObserver {
 
   folly::Optional<std::string> getAppProtocol() const override;
 
-  void setReceiveWindow(StreamId, size_t /*recvWindowSize*/) override {}
+  void setReceiveWindow(StreamId id, size_t recvWindowSize) override;
 
-  void setSendBuffer(StreamId, size_t /*maxUnacked*/, size_t /*maxUnsent*/)
-      override {}
+  void setSendBuffer(StreamId id, size_t maxUnacked, size_t maxUnsent) override;
 
   uint64_t getConnectionBufferAvailable() const override;
 
@@ -741,6 +740,12 @@ class QuicTransportBase : public QuicSocket, QuicStreamPrioritiesObserver {
   folly::Expected<StreamId, LocalErrorCode> createStreamInternal(
       bool bidirectional,
       const folly::Optional<StreamGroupId>& streamGroupId = folly::none);
+
+  /**
+   * Helper function - if given error is not set, returns a generic app error.
+   * Used by close() and closeNow().
+   */
+  QuicError maybeSetGenericAppError(folly::Optional<QuicError> error);
 
   /**
    * write data to socket

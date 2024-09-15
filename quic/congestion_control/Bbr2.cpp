@@ -26,13 +26,13 @@ constexpr uint64_t kMaxExtraAckedFilterLen =
 constexpr float kStartupPacingGain = 2.89; // 2 / ln(2)
 constexpr float kDrainPacingGain = 1 / kStartupPacingGain;
 constexpr float kProbeBwDownPacingGain = 0.9;
-constexpr float kProbeBwCruiseRefillPacingGain = 1.0;
+constexpr float kProbeBwCruisePacingGain = 1.0;
+constexpr float kProbeBwRefillPacingGain = 1.0;
 constexpr float kProbeBwUpPacingGain = 1.25;
 constexpr float kProbeRttPacingGain = 1.0;
 
 constexpr float kStartupCwndGain = 2.89;
-constexpr float kProbeBwCruiseRefillCwndGain = 2.0;
-constexpr float kProbeBwUpDownCwndGain = 2.0;
+constexpr float kProbeBwCwndGain = 2.0;
 constexpr float kProbeRttCwndGain = 0.5;
 
 constexpr float kBeta = 0.7;
@@ -41,10 +41,7 @@ constexpr float kLossThreshold = 0.02;
 constexpr float kHeadroomFactor = 0.15;
 
 quic::Bandwidth kMinPacingRateForSendQuantum{1200 * 1000, 1s};
-// The experimental pacer currently achieves ~99% of the target rate
-// we should not reduce the target by adding an extra margin.
-// TODO: add the margin back if the pacer performance improves further.
-constexpr uint8_t kPacingMarginPercent = 0;
+constexpr uint8_t kPacingMarginPercent = 1;
 
 Bbr2CongestionController::Bbr2CongestionController(
     QuicConnectionStateBase& conn)
@@ -87,9 +84,8 @@ void Bbr2CongestionController::onPacketSent(
   addAndCheckOverflow(
       conn_.lossState.inflightBytes, packet.metadata.encodedSize);
 
-  // Maintain cwndLimited flag. We consider the transport being cwnd limited if
-  // we are using > 90% of the cwnd.
-  if (conn_.lossState.inflightBytes > cwndBytes_ * 9 / 10) {
+  // Maintain cwndLimited flag
+  if (conn_.lossState.inflightBytes >= cwndBytes_) {
     cwndLimitedInRound_ |= true;
   }
 }
@@ -138,12 +134,6 @@ void Bbr2CongestionController::onPacketAckOrLoss(
   }
 
   if (ackEvent) {
-    if (ackEvent->implicit) {
-      // Implicit acks should not be used for bandwidth or rtt estimation
-      setCwnd(ackEvent->ackedBytes, 0);
-      return;
-    }
-
     if (appLimited_ &&
         appLimitedLastSendTime_ <= ackEvent->largestNewlyAckedPacketSentTime) {
       appLimited_ = false;
@@ -235,7 +225,8 @@ void Bbr2CongestionController::resetLowerBounds() {
 }
 void Bbr2CongestionController::enterStartup() {
   state_ = State::Startup;
-  updatePacingAndCwndGain();
+  pacingGain_ = kStartupPacingGain;
+  cwndGain_ = kStartupCwndGain;
 }
 
 void Bbr2CongestionController::setPacing() {
@@ -336,6 +327,7 @@ void Bbr2CongestionController::restoreCwnd() {
 }
 void Bbr2CongestionController::exitProbeRtt() {
   resetLowerBounds();
+  cwndGain_ = kProbeBwCwndGain;
   if (filledPipe_) {
     startProbeBwDown();
     startProbeBwCruise();
@@ -391,7 +383,7 @@ void Bbr2CongestionController::updateCongestionSignals(
   if (state_ == State::ProbeBw_Up) {
     return;
   }
-  if (lossBytesInRound_ > 0) {
+  if (lossBytesInRound_ > 0 && !conn_.transportSettings.ccaConfig.ignoreLoss) {
     // InitLowerBounds
     if (!bandwidthLo_.has_value()) {
       bandwidthLo_ = maxBwFilter_.GetBest();
@@ -432,6 +424,9 @@ void Bbr2CongestionController::checkStartupDone() {
   checkStartupHighLoss();
 
   if (state_ == State::Startup && filledPipe_) {
+    if (conn_.transportSettings.ccaConfig.advanceCycleAfterStartup) {
+      cycleCount_++;
+    }
     enterDrain();
   }
 }
@@ -482,7 +477,8 @@ void Bbr2CongestionController::checkStartupHighLoss() {
 
 void Bbr2CongestionController::enterDrain() {
   state_ = State::Drain;
-  updatePacingAndCwndGain();
+  pacingGain_ = kDrainPacingGain; // Slow down pacing
+  cwndGain_ = kStartupCwndGain; // maintain cwnd
 }
 
 void Bbr2CongestionController::checkDrain() {
@@ -530,8 +526,9 @@ void Bbr2CongestionController::updateProbeBwCyclePhase(
       }
       break;
     case State::ProbeBw_Up:
+
       if (hasElapsedInPhase(minRtt_) &&
-          conn_.lossState.inflightBytes > getTargetInflightWithGain(1.25)) {
+          inflightLatest_ > getTargetInflightWithGain(1.25)) {
         startProbeBwDown();
       }
       break;
@@ -547,7 +544,14 @@ void Bbr2CongestionController::adaptUpperBounds(
     uint64_t ackedBytes,
     uint64_t inflightBytesAtLargestAckedPacket,
     uint64_t lostBytes) {
-  /* Update BBR.inflight_hi and BBR.bw_hi. */
+  /* Advance probeBw round if necessary and update BBR.max_bw window and
+   * BBR.inflight_hi and BBR.bw_hi. */
+  if (state_ == State::ProbeBw_Down && roundStart_) {
+    /* end of samples from bw probing phase */
+    if (!isAppLimited()) {
+      cycleCount_++;
+    }
+  }
 
   if (!checkInflightTooHigh(inflightBytesAtLargestAckedPacket, lostBytes)) {
     if (!inflightHi_.has_value() || !bandwidthHi_.has_value()) {
@@ -704,7 +708,8 @@ void Bbr2CongestionController::checkProbeRtt(uint64_t ackedBytes) {
 
 void Bbr2CongestionController::enterProbeRtt() {
   state_ = State::ProbeRTT;
-  updatePacingAndCwndGain();
+  pacingGain_ = kProbeRttPacingGain;
+  cwndGain_ = kProbeRttCwndGain;
 }
 
 void Bbr2CongestionController::handleProbeRtt() {
@@ -749,12 +754,10 @@ void Bbr2CongestionController::boundCwndForProbeRTT() {
 void Bbr2CongestionController::boundBwForModel() {
   bandwidth_ = maxBwFilter_.GetBest();
   if (state_ != State::Startup) {
-    if (bandwidthLo_.has_value() &&
-        !conn_.transportSettings.ccaConfig.ignoreLoss) {
+    if (bandwidthLo_.has_value()) {
       bandwidth_ = std::min(bandwidth_, *bandwidthLo_);
     }
-    if (bandwidthHi_.has_value() &&
-        !conn_.transportSettings.ccaConfig.ignoreInflightHi) {
+    if (bandwidthHi_.has_value()) {
       bandwidth_ = std::min(bandwidth_, *bandwidthHi_);
     }
   }
@@ -799,6 +802,7 @@ uint64_t Bbr2CongestionController::getBDPWithGain(float gain) const {
 }
 
 void Bbr2CongestionController::enterProbeBW() {
+  cwndGain_ = kProbeBwCwndGain;
   startProbeBwDown();
 }
 
@@ -825,23 +829,16 @@ void Bbr2CongestionController::startProbeBwDown() {
   /* Decide random round-trip bound for wait: */
   roundsSinceBwProbe_ = folly::Random::rand32() % 2;
   /* Decide the random wall clock bound for wait: between 2-3 seconds */
-  bwProbeWait_ =
-      std::chrono::milliseconds(2000 + (folly::Random::rand32() % 1000));
+  bwProbeWait_ = std::chrono::milliseconds(2 + folly::Random::rand32() % 1000);
 
   probeBWCycleStart_ = Clock::now();
   state_ = State::ProbeBw_Down;
-  updatePacingAndCwndGain();
+  pacingGain_ = kProbeBwDownPacingGain;
   startRound();
-
-  // This is a new ProbeBW cycle. Advance the max bw filter if we're not app
-  // limited
-  if (!isAppLimited()) {
-    cycleCount_++;
-  }
 }
 void Bbr2CongestionController::startProbeBwCruise() {
   state_ = State::ProbeBw_Cruise;
-  updatePacingAndCwndGain();
+  pacingGain_ = kProbeBwCruisePacingGain;
 }
 
 void Bbr2CongestionController::startProbeBwRefill() {
@@ -849,13 +846,13 @@ void Bbr2CongestionController::startProbeBwRefill() {
   probeUpRounds_ = 0;
   probeUpAcks_ = 0;
   state_ = State::ProbeBw_Refill;
-  updatePacingAndCwndGain();
+  pacingGain_ = kProbeBwRefillPacingGain;
   startRound();
 }
 void Bbr2CongestionController::startProbeBwUp() {
   probeBWCycleStart_ = Clock::now();
   state_ = State::ProbeBw_Up;
-  updatePacingAndCwndGain();
+  pacingGain_ = kProbeBwUpPacingGain;
   startRound();
   raiseInflightHiSlope();
 }
@@ -914,9 +911,6 @@ Bandwidth Bbr2CongestionController::getBandwidthSampleFromAck(
 }
 
 bool Bbr2CongestionController::isRenoCoexistenceProbeTime() {
-  if (!conn_.transportSettings.ccaConfig.enableRenoCoexistence) {
-    return false;
-  }
   auto renoBdpInPackets = std::min(getTargetInflightWithGain(), cwndBytes_) /
       conn_.udpSendPacketLen;
   auto roundsBeforeRenoProbe =
@@ -932,41 +926,6 @@ Bbr2CongestionController::State Bbr2CongestionController::getState()
 void Bbr2CongestionController::getStats(
     CongestionControllerStats& stats) const {
   stats.bbr2Stats.state = uint8_t(state_);
-}
-
-void Bbr2CongestionController::updatePacingAndCwndGain() {
-  switch (state_) {
-    case State::Startup:
-      pacingGain_ = kStartupPacingGain;
-      cwndGain_ = kStartupCwndGain;
-      break;
-    case State::Drain:
-      pacingGain_ = kDrainPacingGain;
-      cwndGain_ = kStartupCwndGain;
-      break;
-    case State::ProbeBw_Up:
-      pacingGain_ = kProbeBwUpPacingGain;
-      cwndGain_ = kProbeBwUpDownCwndGain;
-      break;
-    case State::ProbeBw_Down:
-      pacingGain_ = kProbeBwDownPacingGain;
-      cwndGain_ = kProbeBwUpDownCwndGain;
-      break;
-    case State::ProbeBw_Cruise:
-    case State::ProbeBw_Refill:
-      pacingGain_ =
-          conn_.transportSettings.ccaConfig.overrideCruisePacingGain > 0
-          ? conn_.transportSettings.ccaConfig.overrideCruisePacingGain
-          : kProbeBwCruiseRefillPacingGain;
-      cwndGain_ = conn_.transportSettings.ccaConfig.overrideCruiseCwndGain > 0
-          ? conn_.transportSettings.ccaConfig.overrideCruiseCwndGain
-          : kProbeBwCruiseRefillCwndGain;
-      break;
-    case State::ProbeRTT:
-      pacingGain_ = kProbeRttPacingGain;
-      cwndGain_ = kProbeRttCwndGain;
-      break;
-  }
 }
 
 std::string bbr2StateToString(Bbr2CongestionController::State state) {
@@ -988,5 +947,4 @@ std::string bbr2StateToString(Bbr2CongestionController::State state) {
   }
   folly::assume_unreachable();
 }
-
 } // namespace quic

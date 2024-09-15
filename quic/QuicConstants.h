@@ -188,9 +188,7 @@ BETTER_ENUM(
     // Controls number of times a stream gets a write in incremental mode
     WRITES_PER_STREAM = 0x10005,
     // Control connection migration
-    CONNECTION_MIGRATION = 0x10006,
-    // Control server-initiated key update interval
-    KEY_UPDATE_INTERVAL = 0x10007)
+    CONNECTION_MIGRATION = 0x10006)
 
 enum class FrameType : uint64_t {
   PADDING = 0x00,
@@ -299,6 +297,7 @@ enum class LocalErrorCode : uint64_t {
   CWND_OVERFLOW = 0x40000007,
   INFLIGHT_BYTES_OVERFLOW = 0x40000008,
   LOST_BYTES_OVERFLOW = 0x40000009,
+  CONGESTION_CONTROL_ERROR = 0x4000000A,
   // This is a retryable error. When encountering this error,
   // the user should retry the request.
   NEW_VERSION_NEGOTIATED = 0x4000000A,
@@ -321,7 +320,6 @@ enum class LocalErrorCode : uint64_t {
   KNOB_FRAME_UNSUPPORTED = 0x4000001B,
   PACER_NOT_AVAILABLE = 0x4000001C,
   RTX_POLICIES_LIMIT_EXCEEDED = 0x4000001D,
-  CONGESTION_CONTROL_ERROR = 0x4000001E,
 };
 
 enum class QuicNodeType : bool {
@@ -402,15 +400,15 @@ constexpr std::chrono::microseconds kDefaultPacingTimerResolution{100};
 constexpr DurationRep kDefaultWriteLimitRttFraction = 25;
 
 // Congestion control:
-constexpr std::string_view kCongestionControlCubicStr = "cubic";
-constexpr std::string_view kCongestionControlBbrStr = "bbr";
-constexpr std::string_view kCongestionControlBbr2Str = "bbr2";
-constexpr std::string_view kCongestionControlBbrTestingStr = "bbr_testing";
-constexpr std::string_view kCongestionControlCopaStr = "copa";
-constexpr std::string_view kCongestionControlCopa2Str = "copa2";
-constexpr std::string_view kCongestionControlNewRenoStr = "newreno";
-constexpr std::string_view kCongestionControlStaticCwndStr = "staticcwnd";
-constexpr std::string_view kCongestionControlNoneStr = "none";
+const std::string_view kCongestionControlCubicStr = "cubic";
+const std::string_view kCongestionControlBbrStr = "bbr";
+const std::string_view kCongestionControlBbr2Str = "bbr2";
+const std::string_view kCongestionControlBbrTestingStr = "bbr_testing";
+const std::string_view kCongestionControlCopaStr = "copa";
+const std::string_view kCongestionControlCopa2Str = "copa2";
+const std::string_view kCongestionControlNewRenoStr = "newreno";
+const std::string_view kCongestionControlStaticCwndStr = "staticcwnd";
+const std::string_view kCongestionControlNoneStr = "none";
 
 constexpr DurationRep kPersistentCongestionThreshold = 3;
 enum class CongestionControlType : uint8_t {
@@ -614,13 +612,6 @@ constexpr uint32_t kDefaultMaxDatagramsBuffered = 75;
 // Minimum interval between new session tickets sent by the server in
 // milliseconds
 constexpr std::chrono::milliseconds kMinIntervalBetweenSessionTickets = 100ms;
-
-// Number of packets to write with the current cipher before initiating a key
-// update. This is a conservative number below the confidentiality limit (2^23)
-// derived in the spec for packets of size up to 64k bytes:
-// https://www.rfc-editor.org/rfc/rfc9001.html#name-confidentiality-limit
-constexpr uint64_t kDefaultKeyUpdatePacketCountInterval = 1ull * 1000 * 1000;
-constexpr uint64_t kFirstKeyUpdatePacketCount = 500ull;
 
 enum class ZeroRttSourceTokenMatchingPolicy : uint8_t {
   REJECT_IF_NO_EXACT_MATCH = 0,

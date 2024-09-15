@@ -10,14 +10,12 @@
 #include <quic/QuicConstants.h>
 #include <quic/codec/PacketNumberCipher.h>
 #include <quic/codec/Types.h>
-#include <quic/handshake/Aead.h>
 
 namespace quic {
 
 constexpr folly::StringPiece kQuicKeyLabel = "quic key";
 constexpr folly::StringPiece kQuicIVLabel = "quic iv";
 constexpr folly::StringPiece kQuicPNLabel = "quic hp";
-constexpr folly::StringPiece kQuicKULabel = "quic ku";
 
 class Handshake {
  public:
@@ -25,31 +23,6 @@ class Handshake {
 
   virtual const folly::Optional<std::string>& getApplicationProtocol()
       const = 0;
-
-  /**
-   * An API to get oneRttReadCiphers on key rotation. Each call will return a
-   * one rtt read cipher using the current traffic secret and advance the
-   * traffic secret.
-   */
-  virtual std::unique_ptr<Aead> getNextOneRttReadCipher() = 0;
-
-  /**
-   * An API to get oneRttWriteCiphers on key rotation. Each call will return a
-   * one rtt write cipher using the current traffic secret and advance the
-   * traffic secret.
-   */
-  virtual std::unique_ptr<Aead> getNextOneRttWriteCipher() = 0;
-
-  /*
-   * Export the underlying TLS key material.
-   * label is the label argument for the TLS exporter.
-   * context is the context value argument for the TLS exporter.
-   * keyLength is the length of the exported key.
-   */
-  virtual folly::Optional<std::vector<uint8_t>> getExportedKeyingMaterial(
-      const std::string& label,
-      const folly::Optional<folly::ByteRange>& context,
-      uint16_t keyLength) = 0;
 
   virtual void handshakeConfirmed() {
     LOG(FATAL) << "Not implemented";

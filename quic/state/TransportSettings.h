@@ -77,18 +77,8 @@ struct CongestionControlConfig {
   bool ignoreLoss{false};
 
   // Used by: BBR2
-  // Whether BBR2 should enable reno coexistence.
-  bool enableRenoCoexistence{false};
-
-  // Used by: BBR2
-  // Use a different pacing gain during ProbeBW Cruise and Refill.
-  // If value < 0, use the default pacing gain.
-  float overrideCruisePacingGain{-1.0};
-
-  // Used by: BBR2
-  // Use a different cwnd gain during ProbeBW Cruise and Refill.
-  // If value < 0, use the default cwnd gain.
-  float overrideCruiseCwndGain{-1.0};
+  // Whether BBR2 should advance the cycle count on exiting startup
+  bool advanceCycleAfterStartup{true};
 };
 
 struct DatagramConfig {
@@ -342,19 +332,6 @@ struct TransportSettings {
   // allowing cwnd growth. 0 disables. The amount given to callbacks has the
   // current amount of stream bytes buffered subtracted from it.
   uint8_t backpressureHeadroomFactor{0};
-
-  // Whether to initiate key updates
-  bool initiateKeyUpdate{false};
-  // How many packets to send before initiating the first key update.
-  // This is reset to folly::none after the first key update is initiated.
-  folly::Optional<uint64_t> firstKeyUpdatePacketCount{
-      kFirstKeyUpdatePacketCount};
-  // How many packets to send before initiating periodic key updates
-  uint64_t keyUpdatePacketCountInterval{kDefaultKeyUpdatePacketCountInterval};
-  // Whether to terminate the connection when a peer initiates a key update.
-  // TODO: Remove this. This is a temporary measure to gradually roll out key
-  // update support.
-  bool rejectIncomingKeyUpdates{false};
 };
 
 } // namespace quic
